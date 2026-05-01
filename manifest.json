@@ -1,0 +1,9 @@
+{
+  "id": "yori-editor",
+  "name": "Yori Editor",
+  "version": "0.4.0",
+  "minAppVersion": "1.5.11",
+  "description": "Markdown / 富文本双模式编辑器增强（基于 editor 副本6 主框架）：工具栏、表格、PDF 等；正文仍为 .md。",
+  "author": "YoriGo",
+  "isDesktopOnly": true
+}

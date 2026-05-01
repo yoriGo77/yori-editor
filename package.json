@@ -1,0 +1,21 @@
+{
+  "name": "yori-editor",
+  "version": "0.4.0",
+  "description": "Markdown / 富文本双模式编辑器增强（基于 editor 副本6 主框架）：工具栏、表格、PDF 等；正文仍为 .md。",
+  "author": "YoriGo",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "0.20.2",
+    "obsidian": "^1.7.2",
+    "tslib": "^2.6.2",
+    "typescript": "5.4.5"
+  }
+}

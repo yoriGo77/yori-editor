@@ -1,0 +1,1438 @@
+/* 原生增强源码：视觉隐藏 YORI 块边界注释（正文仍存在，仅减少干扰） */
+.markdown-source-view .cm-line.yori-cm-rich-boundary-hidden {
+  font-size: 0 !important;
+  line-height: 0 !important;
+  min-height: 1px !important;
+  padding-top: 1px !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  color: transparent !important;
+  caret-color: var(--text-normal) !important;
+}
+
+.yori-editor-toolbar {
+  --yori-bg: transparent;
+  --yori-accent: #af9165;
+  --yori-text: #3f3527;
+  --yori-soft: #99876c;
+  --yori-toolbar-inter-group-gap: 14px;
+  position: sticky;
+  z-index: 20;
+  min-height: 48px;
+  height: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  row-gap: 6px;
+  gap: var(--yori-toolbar-inter-group-gap);
+  padding: 6px 10px 10px;
+  margin: 0 0 8px;
+  background: var(--background-primary, #fff);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 1px solid #ddd6cc;
+  isolation: isolate;
+}
+
+/* 高级编辑：让滚动区受窗格高度约束，而非整屏 dvh（分屏时否则会裁切或溢出） */
+.view-content.yori-rich-view-content-flex {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.view-content.yori-rich-view-content-flex .markdown-preview-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.yori-rich-editor-wrap {
+  position: relative;
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(72vh, 720px);
+  height: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 12px;
+  scroll-padding-bottom: clamp(32px, 6dvh, 64px);
+  cursor: text;
+}
+
+.yori-rich-editor {
+  flex: 1 1 auto;
+  min-height: min-content;
+  width: min(100%, var(--file-line-width, 760px));
+  margin: 0 auto;
+  padding: calc(var(--file-margins-top, 16px) + 8px) 20px
+    calc(clamp(20px, 4dvh, 40px) + var(--safe-area-inset-bottom, 0px)) 20px;
+  box-sizing: border-box;
+  outline: none;
+  line-height: 1.8;
+  color: var(--text-normal);
+  cursor: text;
+}
+
+/* 高级编辑：粘贴的外部网址显示为可识别的外链（与笔记内链样式区分） */
+.yori-rich-editor a.yori-rich-external-link {
+  color: var(--link-color, var(--text-accent, #0969da));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.yori-rich-editor.is-cell-drag-selecting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.yori-rich-editor.is-table-resizing {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.yori-rich-editor p {
+  margin: 0 0 10px;
+}
+
+/* 高级编辑内可点击库内链接（主题未必为 contenteditable 内的 internal-link 上色） */
+.yori-rich-editor a.internal-link {
+  cursor: pointer;
+  color: var(--link-color, var(--text-accent, #0969da));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.yori-rich-editor a.internal-link.is-unresolved {
+  color: var(--link-color, var(--text-accent, #0969da));
+  opacity: 0.9;
+}
+
+/* 高级编辑：Obsidian 式 #标签，与内链同色 */
+.yori-rich-editor span.yori-rich-inline-tag {
+  color: var(--link-color, var(--text-accent, #0969da));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: text;
+}
+
+.yori-rich-generic-embed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  margin: 6px 0;
+  padding: 8px 10px;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border, rgba(0, 0, 0, 0.12));
+  background: var(--background-secondary, rgba(0, 0, 0, 0.04));
+  color: var(--text-normal);
+}
+
+.yori-rich-media-paragraph {
+  margin: 0 0 10px;
+}
+
+.yori-rich-atomic-embed {
+  display: block;
+  user-select: none;
+}
+
+/* Obsidian 式：高级编辑内图片右下角拖拽宽度 → ![[path|width]] */
+.yori-rich-img-resize-host {
+  display: block;
+  max-width: 100%;
+}
+
+.yori-rich-img-resize-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+.yori-rich-img-resize-frame img[data-yori-image-embed] {
+  display: block;
+  height: auto;
+}
+
+.yori-rich-img-resize-handle {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  -webkit-user-drag: none;
+  box-sizing: border-box;
+  background: var(--background-primary, #fff);
+  border: 1px solid var(--background-modifier-border, rgba(0, 0, 0, 0.2));
+  border-radius: 3px 0 0 0;
+  opacity: 0.55;
+  z-index: 1;
+}
+
+.yori-rich-img-resize-frame:hover .yori-rich-img-resize-handle {
+  opacity: 1;
+}
+
+.yori-rich-pdf-embed {
+  display: block;
+  margin: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border, rgba(0, 0, 0, 0.12));
+}
+
+/* 解析尺寸前：占位高度，避免布局跳动过小 */
+.yori-rich-pdf-embed:not(.yori-rich-pdf-embed--sized) iframe.yori-rich-pdf-iframe,
+.yori-rich-pdf-embed:not(.yori-rich-pdf-embed--sized) iframe {
+  width: 100%;
+  min-height: 360px;
+  height: min(88vh, 960px);
+  border: 0;
+  display: block;
+  background: var(--background-primary);
+}
+
+/* 已按首页宽高比约束外框；配合 max-height 缩窄以便竖屏长页不溢出视口 */
+.yori-rich-pdf-embed.yori-rich-pdf-embed--sized {
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+}
+
+.yori-rich-pdf-embed.yori-rich-pdf-embed--sized iframe.yori-rich-pdf-iframe,
+.yori-rich-pdf-embed.yori-rich-pdf-embed--sized iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: var(--background-primary);
+}
+
+.yori-rich-generic-embed-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.yori-rich-generic-embed a.internal-link {
+  text-decoration: none;
+  color: var(--text-normal);
+  opacity: 1;
+}
+
+/* 待办：复选框为 li 直接子级或包在 p/div 等一层块内时，均去掉列表圆点 */
+.yori-rich-editor ul:where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  ) {
+  list-style: none;
+  list-style-type: none;
+  padding-left: 0;
+  padding-inline-start: 0;
+  margin: 0 0 10px;
+}
+
+.yori-rich-editor
+  ul:where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  )
+  > li {
+  list-style: none;
+  list-style-type: none;
+  margin: 0;
+  padding-left: 0;
+  padding-inline-start: 0;
+}
+
+/**
+ * 高级模式下任务列表与正文错位：较多主题会给 li/p 加 padding-inline-start 或给复选框负 margin，
+ * 结果圆框卡在「视觉左缘」而文字仍在内边距之后。用双列网格把 input 与各内容块锁在同一行起点。
+ */
+.yori-rich-editor ul.contains-task-list {
+  padding-inline-start: 0 !important;
+  margin-inline-start: 0 !important;
+}
+
+.yori-rich-editor ul.contains-task-list > li.task-list-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.45em;
+  row-gap: 0.25em;
+  align-items: start;
+  list-style: none !important;
+  padding-inline-start: 0 !important;
+  margin-inline-start: 0 !important;
+}
+
+.yori-rich-editor ul.contains-task-list > li.task-list-item > input.task-list-item-checkbox,
+.yori-rich-editor ul.contains-task-list > li.task-list-item > input[type="checkbox"] {
+  grid-column: 1;
+  /* 多行正文（多块级）时占满左侧整列高度 */
+  grid-row: 1 / -1;
+  margin: 0 !important;
+  margin-top: 0.22em !important;
+  justify-self: start;
+  align-self: start;
+  position: relative !important;
+  left: 0 !important;
+  transform: none !important;
+}
+
+/* 纯行内正文包成一格，避免 Grid 把「文本 / span / 文本」拆成多行 */
+.yori-rich-editor ul.contains-task-list > li.task-list-item > .yori-rich-task-li-body {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.yori-rich-editor ul.contains-task-list > li.task-list-item > *:not(input[type="checkbox"]):not(.yori-rich-task-li-body) {
+  grid-column: 2;
+  max-width: 100%;
+}
+
+/* 表格单元格内：Grid 在窄格里易异常撑高行；改为单行 flex */
+.yori-rich-editor td ul.contains-task-list,
+.yori-rich-editor th ul.contains-task-list {
+  margin: 0;
+}
+
+.yori-rich-editor td ul.contains-task-list > li.task-list-item,
+.yori-rich-editor th ul.contains-task-list > li.task-list-item {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 0.45em;
+}
+
+.yori-rich-editor td ul.contains-task-list > li.task-list-item > input.task-list-item-checkbox,
+.yori-rich-editor td ul.contains-task-list > li.task-list-item > input[type="checkbox"],
+.yori-rich-editor th ul.contains-task-list > li.task-list-item > input.task-list-item-checkbox,
+.yori-rich-editor th ul.contains-task-list > li.task-list-item > input[type="checkbox"] {
+  grid-column: unset;
+  grid-row: unset;
+  flex: 0 0 auto;
+}
+
+.yori-rich-editor td ul.contains-task-list > li.task-list-item > .yori-rich-task-li-body,
+.yori-rich-editor th ul.contains-task-list > li.task-list-item > .yori-rich-task-li-body {
+  grid-column: unset;
+  grid-row: unset;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.yori-rich-editor td ul.contains-task-list > li.task-list-item > *:not(input[type="checkbox"]):not(.yori-rich-task-li-body),
+.yori-rich-editor th ul.contains-task-list > li.task-list-item > *:not(input[type="checkbox"]):not(.yori-rich-task-li-body) {
+  grid-column: unset;
+  grid-row: unset;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 源码(Live Preview)/预览/阅读：内嵌 HTML 缺 contains-task-list 时，主题仍会给 li 画圆点 */
+.markdown-source-view ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  ),
+.markdown-preview-view ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  ),
+.markdown-reading-view ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  ) {
+  list-style: none;
+  list-style-type: none;
+}
+
+.markdown-source-view
+  ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  )
+  > li:where(:has(> input[type="checkbox"]), :has(> p > input[type="checkbox"]), :has(> div > input[type="checkbox"])),
+.markdown-preview-view
+  ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  )
+  > li:where(:has(> input[type="checkbox"]), :has(> p > input[type="checkbox"]), :has(> div > input[type="checkbox"])),
+.markdown-reading-view
+  ul:not(.contains-task-list):where(
+    :has(> li > input[type="checkbox"]),
+    :has(> li > p > input[type="checkbox"]),
+    :has(> li > div > input[type="checkbox"])
+  )
+  > li:where(:has(> input[type="checkbox"]), :has(> p > input[type="checkbox"]), :has(> div > input[type="checkbox"])) {
+  list-style: none;
+  list-style-type: none;
+}
+
+.yori-rich-editor table {
+  display: table;
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 10px 0;
+  box-sizing: border-box;
+}
+
+.yori-rich-editor th,
+.yori-rich-editor td {
+  border: 1px solid #d9cfbf;
+  padding: 6px 8px;
+  vertical-align: top;
+  min-width: 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* 取消列表后的 <p> 仍保留浏览器默认 margin，在 td 内会把行高撑得过高 */
+.yori-rich-editor td > p,
+.yori-rich-editor th > p {
+  margin: 0;
+}
+
+.yori-rich-editor td > p + p,
+.yori-rich-editor th > p + p {
+  margin-top: 0.45em;
+}
+
+.yori-rich-editor th.yori-table-cell-selected,
+.yori-rich-editor td.yori-table-cell-selected {
+  box-shadow: inset 0 0 0 9999px rgba(120, 120, 120, 0.18);
+}
+
+.yori-rich-editor input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #af9165;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  vertical-align: middle;
+  margin: 0;
+}
+
+.yori-rich-editor input[type="checkbox"]:checked {
+  border-color: transparent;
+  background: #af9165;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.2 8.2l2.8 2.8 6-6' fill='none' stroke='white' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px 12px;
+  box-shadow: none;
+}
+
+.yori-editor-toolbar.is-top {
+  top: 0;
+}
+
+.yori-editor-toolbar.is-bottom {
+  bottom: 8px;
+}
+
+.yori-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  position: relative;
+}
+
+.yori-toolbar-group.is-text {
+  border-left: none;
+}
+
+.yori-line-spacing-toolbar-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.yori-font-toolbar-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.yori-editor-toolbar button.yori-font-select {
+  width: auto !important;
+  min-width: 104px;
+  height: 26px !important;
+  min-height: 26px;
+  padding: 2px 6px 2px 10px !important;
+  border: 1px solid color-mix(in srgb, var(--yori-text) 22%, var(--background-modifier-border) 78%);
+  border-radius: 4px !important;
+  background: var(--background-primary);
+  gap: 6px;
+  justify-content: space-between;
+  box-sizing: border-box;
+  box-shadow: none;
+  /* 必须包含 CJK 回退：否则中文/日文族名会渲染成 ??（界面字体常为拉丁） */
+  font-family: var(--font-text), var(--font-interface), ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Noto Sans CJK SC", sans-serif !important;
+}
+
+.yori-editor-toolbar button.yori-font-select:hover {
+  border: 1px solid color-mix(in srgb, var(--yori-text) 38%, var(--background-modifier-border) 62%) !important;
+  background: color-mix(in srgb, var(--background-modifier-hover) 85%, var(--background-primary) 15%) !important;
+}
+
+.yori-editor-toolbar button.yori-font-select:focus-visible {
+  border: 1px solid color-mix(in srgb, var(--yori-text) 38%, var(--background-modifier-border) 62%) !important;
+  background: color-mix(in srgb, var(--background-modifier-hover) 85%, var(--background-primary) 15%) !important;
+}
+
+.yori-editor-toolbar button.yori-font-select.is-size {
+  min-width: 52px;
+}
+
+.yori-font-select-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 128px;
+  color: var(--text-normal);
+  font-family: var(--font-text), var(--font-interface), ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Noto Sans CJK SC", sans-serif !important;
+}
+
+.yori-font-select-chevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+}
+
+.yori-font-select-chevron svg {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+.yori-toolbar-group.is-list {
+  border-left: none;
+}
+
+.yori-toolbar-group.is-insert {
+  border-left: none;
+}
+
+.yori-toolbar-group.is-stats {
+  border-left: none;
+}
+
+.yori-toolbar-group + .yori-toolbar-group::before {
+  content: "";
+  position: absolute;
+  /* 落在两组 flex gap 正中，左右留白对称（以 gap 宽度为准） */
+  left: calc(-0.5 * var(--yori-toolbar-inter-group-gap));
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1px;
+  height: 16px;
+  background: color-mix(in srgb, var(--yori-soft) 45%, white 55%);
+}
+
+.yori-toolbar-group.yori-toolbar-wrap-line-start {
+  padding-inline-start: var(--yori-toolbar-inter-group-gap);
+  box-sizing: border-box;
+}
+
+.yori-toolbar-group.yori-toolbar-wrap-line-start:not(:first-child)::before {
+  left: calc(0.5 * var(--yori-toolbar-inter-group-gap));
+  transform: translate(-50%, -50%);
+}
+
+.yori-editor-toolbar button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--yori-text) 82%, white 18%);
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.yori-editor-toolbar button:not(.yori-font-select):hover {
+  border: none;
+  background: transparent;
+  color: var(--yori-text);
+}
+
+.yori-editor-toolbar button:focus-visible {
+  outline: 2px solid var(--interactive-accent, var(--yori-accent, #af9165));
+  outline-offset: 2px;
+}
+
+.yori-editor-toolbar button.yori-inline-format-active {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.yori-editor-toolbar button.yori-inline-format-active:hover {
+  background: #f1f1f1;
+  color: var(--yori-text);
+}
+
+.yori-editor-toolbar button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.yori-split-btn-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.yori-split-main {
+  width: 26px !important;
+}
+
+.yori-editor-toolbar button.yori-split-color-main {
+  width: 28px !important;
+  min-width: 28px;
+  height: 32px !important;
+  padding: 0 0 3px !important;
+  box-sizing: border-box;
+  gap: 0;
+  display: inline-flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.yori-split-color-main-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  transform: translateY(2px);
+}
+
+.yori-split-color-main-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.yori-split-color-main-bar {
+  display: block;
+  width: 16px;
+  max-width: 100%;
+  height: 4px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: none;
+}
+
+.yori-split-arrow {
+  width: 18px !important;
+  margin-left: -4px;
+}
+
+.yori-split-arrow svg {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+.yori-highlight-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: none;
+  border: 1px solid #ddd6cc;
+  background: var(--background-primary);
+  border-radius: 6px;
+  z-index: 30;
+  box-sizing: border-box;
+}
+
+.yori-native-color-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 18px);
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.yori-highlight-panel.is-open:not(.yori-toolbar-color-panel-rich),
+.yori-text-color-panel.is-open:not(.yori-toolbar-color-panel-rich) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  padding: 8px 10px;
+}
+
+.yori-highlight-panel.is-open.yori-toolbar-color-panel-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+}
+
+.yori-highlight-swatch {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 50% !important;
+  border: 1px solid color-mix(in srgb, #99876c 45%, white 55%) !important;
+}
+
+.yori-highlight-clear {
+  width: auto !important;
+  height: 24px !important;
+  border-radius: 4px !important;
+  font-size: 11px;
+  color: var(--text-normal) !important;
+}
+
+.yori-text-color-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: none;
+  border: 1px solid #ddd6cc;
+  background: var(--background-primary);
+  border-radius: 6px;
+  z-index: 30;
+  box-sizing: border-box;
+}
+
+.yori-text-color-panel.is-open.yori-toolbar-color-panel-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+}
+
+.yori-highlight-panel.is-open:not(.yori-toolbar-color-panel-rich) .yori-highlight-clear,
+.yori-text-color-panel.is-open:not(.yori-toolbar-color-panel-rich) .yori-text-clear {
+  align-self: stretch;
+  width: 100% !important;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.yori-text-swatch {
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 50% !important;
+  border: 1px solid color-mix(in srgb, #99876c 45%, white 55%) !important;
+}
+
+.yori-text-clear {
+  width: auto !important;
+  height: 24px !important;
+  border-radius: 4px !important;
+  font-size: 11px;
+  color: var(--text-normal) !important;
+}
+
+.yori-line-spacing-panel,
+.yori-border-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: none;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #ddd6cc;
+  background: var(--background-primary);
+  border-radius: 6px;
+  z-index: 30;
+  min-width: 104px;
+}
+
+.yori-line-spacing-panel.is-open,
+.yori-border-panel.is-open {
+  display: grid;
+}
+
+.yori-font-family-panel,
+.yori-font-size-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #ddd6cc;
+  background: var(--background-primary);
+  border-radius: 6px;
+  z-index: 30;
+  max-height: min(70vh, 380px);
+  overflow-y: auto;
+}
+
+.yori-font-family-panel {
+  min-width: 148px;
+}
+
+/* 字号以数字为主，略窄于字体下列，但保留舒适边距与滚动条空间 */
+.yori-font-size-panel {
+  min-width: 96px;
+  width: max-content;
+  max-width: 124px;
+  padding: 8px 6px;
+}
+
+.yori-font-family-panel.is-open,
+.yori-font-size-panel.is-open {
+  display: flex;
+}
+
+.yori-font-preset-option {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  width: 100% !important;
+  min-height: 28px !important;
+  height: auto !important;
+  padding: 4px 8px !important;
+  justify-content: flex-start !important;
+  text-align: left;
+  border-radius: 4px !important;
+  font-size: 12px;
+  color: var(--text-normal) !important;
+  font-family: var(--font-text), var(--font-interface), ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei",
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Noto Sans CJK SC", sans-serif !important;
+}
+
+.yori-font-preset-check {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+  color: var(--text-normal);
+}
+
+.yori-font-preset-option.is-active .yori-font-preset-check {
+  visibility: visible;
+}
+
+.yori-font-preset-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.yori-font-size-panel .yori-font-preset-option {
+  width: auto !important;
+  align-self: stretch;
+  padding-left: 8px !important;
+  padding-right: 10px !important;
+  box-sizing: border-box;
+}
+
+.yori-font-size-panel .yori-font-preset-label {
+  flex: 0 0 auto;
+  text-align: left;
+}
+
+.yori-border-panel.is-open.yori-toolbar-color-panel-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+  grid-template-columns: unset;
+}
+
+.yori-rich-editor .yori-rich-bordered {
+  box-sizing: border-box;
+  /* 外侧竖直留白与内边距一致，避免视觉上「上宽下窄」 */
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+
+.yori-rich-editor .yori-rich-bordered > *:first-child {
+  margin-top: 0 !important;
+}
+
+.yori-rich-editor .yori-rich-bordered > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+.yori-line-spacing-option {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start !important;
+  text-align: left;
+  width: auto !important;
+  height: 24px !important;
+  border-radius: 4px !important;
+  padding: 0 8px !important;
+  font-size: 11px;
+  color: var(--text-normal) !important;
+}
+
+.yori-line-spacing-check {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+  color: var(--text-normal);
+}
+
+.yori-line-spacing-option.is-active .yori-line-spacing-check {
+  visibility: visible;
+}
+
+.yori-line-spacing-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.yori-border-width-option {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start !important;
+  text-align: left;
+  width: auto !important;
+  height: 24px !important;
+  border-radius: 4px !important;
+  padding: 0 8px !important;
+  font-size: 11px;
+  color: var(--text-normal) !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  background: transparent !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+.yori-border-width-option:hover,
+.yori-border-width-option:focus-visible {
+  background: #f4efe9 !important;
+}
+
+.yori-border-width-check {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+  color: var(--text-normal);
+}
+
+.yori-border-width-option.is-active .yori-border-width-check {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.yori-border-width-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.yori-rich-table-context-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 168px;
+  padding: 4px 0;
+  border: 1px solid #ddd6cc;
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  display: grid;
+  gap: 4px;
+}
+
+.yori-rich-table-context-item {
+  width: 100% !important;
+  height: 28px !important;
+  justify-content: flex-start !important;
+  padding: 0 12px !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: var(--text-normal) !important;
+}
+
+.yori-rich-table-context-item:hover,
+.yori-rich-table-context-item:focus-visible {
+  background: #f4efe9 !important;
+}
+
+.yori-rich-table-context-item.is-danger {
+  color: #b94848 !important;
+}
+
+.yori-rich-table-context-item.is-disabled,
+.yori-rich-table-context-item:disabled {
+  opacity: 0.45 !important;
+  color: var(--text-muted) !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+}
+
+.yori-rich-table-context-item.is-disabled:hover,
+.yori-rich-table-context-item.is-disabled:focus-visible,
+.yori-rich-table-context-item:disabled:hover,
+.yori-rich-table-context-item:disabled:focus-visible {
+  background: transparent !important;
+}
+
+.yori-rich-table-context-submenu {
+  position: relative;
+}
+
+.yori-rich-table-context-item.is-submenu {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between !important;
+}
+
+.yori-rich-table-context-submenu-arrow {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.yori-rich-table-context-submenu-panel {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #ddd6cc;
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  display: none;
+  gap: 4px;
+  justify-items: stretch;
+}
+
+.yori-rich-table-context-submenu.is-open > .yori-rich-table-context-submenu-panel {
+  display: grid;
+}
+
+.yori-toolbar-color-panel-rich .yori-rich-table-color-grid {
+  align-self: center;
+  width: auto;
+  padding: 6px 0;
+}
+
+.yori-border-panel.is-open.yori-toolbar-color-panel-rich .yori-border-width-option {
+  align-self: stretch;
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 28px !important;
+  padding: 0 12px !important;
+  justify-content: center !important;
+  text-align: center;
+  font-size: var(--font-ui-small) !important;
+  gap: 5px;
+}
+
+.yori-border-panel.is-open.yori-toolbar-color-panel-rich .yori-border-width-option:not(.is-active) .yori-border-width-check {
+  display: none !important;
+}
+
+.yori-border-panel.is-open.yori-toolbar-color-panel-rich .yori-border-width-option.is-active .yori-border-width-check {
+  display: inline-flex !important;
+  visibility: visible !important;
+  position: static;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.yori-border-panel.is-open.yori-toolbar-color-panel-rich .yori-border-width-label {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
+.yori-toolbar-color-panel-rich .yori-rich-table-context-item {
+  align-self: stretch;
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-content: center !important;
+  text-align: center;
+  font-size: var(--font-ui-small);
+}
+
+.yori-toolbar-color-panel-rich .yori-rich-table-context-divider {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.yori-rich-table-color-grid {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  justify-items: center;
+}
+
+.yori-rich-table-color-row {
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  gap: 6px;
+}
+
+.yori-rich-table-color-row.is-section-gap {
+  margin-top: 8px;
+}
+
+.yori-rich-table-color-swatch {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 50% !important;
+  border: none !important;
+  border-width: 0 !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background-clip: padding-box !important;
+  box-shadow: none !important;
+}
+
+.yori-rich-table-color-swatch:hover {
+  box-shadow: 0 0 0 2px rgba(153, 135, 108, 0.35) !important;
+}
+
+.yori-rich-table-color-swatch.is-active {
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px rgba(153, 135, 108, 0.75) !important;
+}
+
+.yori-rich-table-context-submenu-panel .yori-rich-table-context-item {
+  align-self: stretch;
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-content: center !important;
+  text-align: center;
+}
+
+/* 表格右键「背景颜色 / 边框设置」子菜单：与工具栏色盘一致的上下面距；分隔线在 grid 内横向拉满（避免 justify-items:center 导致线宽为 0） */
+.yori-rich-table-context-submenu-panel .yori-rich-table-color-grid {
+  justify-self: center;
+  padding: 6px 0;
+}
+
+.yori-rich-table-context-submenu-panel .yori-rich-table-context-divider {
+  justify-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 表格右键「边框设置」内：与工具栏段落边框一致的粗细行样式 */
+.yori-rich-table-context-submenu-panel .yori-border-width-option {
+  align-self: stretch;
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 28px !important;
+  padding: 0 12px !important;
+  justify-content: center !important;
+  text-align: center;
+  font-size: var(--font-ui-small) !important;
+  gap: 5px;
+}
+
+.yori-rich-table-context-submenu-panel .yori-border-width-option:not(.is-active) .yori-border-width-check {
+  display: none !important;
+}
+
+.yori-rich-table-context-submenu-panel .yori-border-width-option.is-active .yori-border-width-check {
+  display: inline-flex !important;
+  visibility: visible !important;
+  position: static;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.yori-rich-table-context-submenu-panel .yori-border-width-label {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
+.yori-rich-table-context-divider {
+  height: 1px;
+  margin: 2px 0;
+  background: #e8e1d7;
+}
+
+.yori-editor-tag-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.yori-color-modal-hint {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+
+.yori-color-modal-picker {
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--background-primary);
+}
+
+/* —— 设置页底部：提示与打赏 —— */
+.yori-settings-hr {
+  margin: 1.75em 0 1.15em;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.yori-settings-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 0.35rem;
+}
+
+.yori-settings-footer-tips {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.yori-settings-footer-tips-heading {
+  font-weight: 600;
+  margin-bottom: 0.4em;
+  color: var(--text-normal);
+}
+
+.yori-settings-footer-tip-text {
+  margin: 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.55;
+}
+
+.yori-settings-donate-card {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 72px;
+  min-height: 78px;
+  padding: 11px 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 9px;
+  background-color: #ffffff;
+  text-decoration: none !important;
+  color: var(--text-normal);
+  /* 窄而轻的投影，贴近底部略偏右（与参考插件一致） */
+  box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.theme-dark .yori-settings-donate-card {
+  background-color: var(--background-secondary-alt, var(--background-secondary));
+  border-color: var(--background-modifier-border);
+  box-shadow: 1px 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.yori-settings-donate-card:hover {
+  background-color: #fafafa;
+  border-color: #d0d0d0;
+  box-shadow: 1px 3px 6px rgba(0, 0, 0, 0.1);
+}
+
+.theme-dark .yori-settings-donate-card:hover {
+  background-color: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+  box-shadow: 1px 3px 6px rgba(0, 0, 0, 0.42);
+}
+
+.yori-settings-donate-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-red, #e03131);
+}
+
+.yori-settings-donate-icon svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.yori-settings-donate-label {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+}
+
+/* —— 高级编辑：插入笔记标签弹窗 —— */
+.yori-rich-tag-insert-modal {
+  max-width: min(420px, 92vw);
+}
+
+.yori-rich-tag-insert-hint {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.yori-rich-tag-insert-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.yori-rich-tag-insert-hash {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-accent, var(--text-muted));
+}
+
+.yori-rich-tag-insert-input {
+  flex: 1;
+  min-width: 0;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  font-size: var(--font-ui-medium);
+  color: var(--text-normal);
+}
+
+.yori-rich-tag-insert-list {
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.theme-dark .yori-rich-tag-insert-list {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.yori-rich-tag-insert-empty {
+  padding: 10px 12px;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.yori-rich-tag-insert-item {
+  padding: 8px 12px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.yori-rich-tag-insert-item:last-child {
+  border-bottom: none;
+}
+
+.yori-rich-tag-insert-item:hover,
+.yori-rich-tag-insert-item.is-active {
+  background: var(--background-modifier-hover);
+}
+
+.yori-rich-tag-insert-item strong {
+  font-weight: 700;
+}
