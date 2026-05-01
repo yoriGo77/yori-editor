@@ -170,7 +170,7 @@ export const YORI_RICH_INLINE_TAG_CLASS = "yori-rich-inline-tag";
  */
 export const RICH_COLOR_GRID_HUE_ROWS = [
   ["#000000", "#c6c6c6", "#ffffff"],
-  ["#a4a098", "#dfd7c9", "#f4efe6"],
+  ["#a4a098", "#f4f4f4", "#f4efe6"],
   ["#e6d99d", "#f1eac7", "#f8f5dd"],
   ["#b1b499", "#dddfc7", "#f0f1e4"],
   ["#cecf96", "#ebebc9", "#f3f4e0"],

@@ -185,6 +185,12 @@ export default class YoriEditorPlugin extends Plugin {
   private richContextCell: HTMLTableCellElement | null = null;
   /** 右键「插入笔记标签」弹窗打开前保存的光标，用于关闭后插入 #标签 */
   private richTagInsertSavedRange: Range | null = null;
+  /** 「插入库内链接」弹窗打开前保存的选区/光标，避免失焦后插入落到文末 */
+  private richVaultLinkSavedRange: Range | null = null;
+  /** 右键菜单弹出瞬间的选区（点击菜单项时选区常被清空，仅供「插入内部链接」消费一次） */
+  private richVaultLinkContextRange: Range | null = null;
+  /** `[[…]]` 水合成 `<a>` 后：待把光标放到锚点之后的 inner（与 data-yori-wikilink 一致） */
+  private richPendingCaretAfterVaultWikiRawInner: string | null = null;
   private richSelectionSyncTimer: number | null = null;
   private richDragAnchorCell: HTMLTableCellElement | null = null;
   private richDragFocusCell: HTMLTableCellElement | null = null;
@@ -637,11 +643,11 @@ export default class YoriEditorPlugin extends Plugin {
     return getRichEditorInnerHtmlForUndoSnapshot(this.richEditorEl);
   }
 
-  private rememberRichStateForUndo(): void {
+  private rememberRichStateForUndo(force = false): void {
     if (!this.richEditorEl || this.richSuppressRichUndoCapture) return;
     const html = this.getRichEditorHtmlForUndoSnapshot();
     const last = this.richUndoHtmlStack[this.richUndoHtmlStack.length - 1];
-    if (last === html) return;
+    if (!force && last === html) return;
     this.richUndoHtmlStack.push(html);
     if (this.richUndoHtmlStack.length > this.richUndoHtmlMaxDepth) {
       this.richUndoHtmlStack.splice(0, this.richUndoHtmlStack.length - this.richUndoHtmlMaxDepth);
@@ -1157,7 +1163,15 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private openVaultLinkPicker(mode: "rich" | "markdown", editor: Editor | null | undefined): void {
+    if (mode === "rich" && !this.richVaultLinkSavedRange) {
+      this.captureRichCaretForVaultLinkInsert();
+    }
     openVaultLinkPickerModal(this as unknown as VaultLinkPickerHost, mode, editor, this.uiLang());
+  }
+
+  /** VaultLinkPickerHost：插入用 Markdown 链接片段（与拖放逻辑共用）。 */
+  markdownLinkForRichDroppedVaultFile(dest: TFile, sourcePath: string): string {
+    return markdownLinkForDroppedVaultFile(this.app, dest, sourcePath);
   }
 
   private handleRichEditorPasteBareUrl(evt: ClipboardEvent): void {
@@ -2667,6 +2681,7 @@ export default class YoriEditorPlugin extends Plugin {
         this.richAddCheckboxToListItemsInUl(ul0);
         return;
       }
+      if (this.richWrapMultipleParagraphsAsTaskList(sel0)) return;
       if (this.richTryWrapParagraphBlockAsSingleTaskList(sel0)) return;
     }
     document.execCommand("insertUnorderedList", false);
@@ -2781,6 +2796,73 @@ export default class YoriEditorPlugin extends Plugin {
       if (merged) return merged;
     }
     return seed;
+  }
+
+  /**
+   * 选区跨越多个顶层段落时，为每一段生成一条任务列表项（各有一个复选框）。
+   */
+  private collectRichTopLevelParagraphBlocksForTaskListRange(range: Range): HTMLParagraphElement[] | null {
+    if (!this.richEditorEl) return null;
+    const startBlock = this.getRichTopLevelBlockElement(range.startContainer);
+    const endBlock = this.getRichTopLevelBlockElement(range.endContainer);
+    if (
+      !startBlock ||
+      !endBlock ||
+      !(startBlock instanceof HTMLParagraphElement) ||
+      !(endBlock instanceof HTMLParagraphElement)
+    ) {
+      return null;
+    }
+    if (startBlock.parentElement !== this.richEditorEl || endBlock.parentElement !== this.richEditorEl) {
+      return null;
+    }
+    const kids = Array.from(this.richEditorEl.children);
+    const i0 = kids.indexOf(startBlock);
+    const i1 = kids.indexOf(endBlock);
+    if (i0 < 0 || i1 < 0) return null;
+    const lo = Math.min(i0, i1);
+    const hi = Math.max(i0, i1);
+    const out: HTMLParagraphElement[] = [];
+    for (let i = lo; i <= hi; i++) {
+      const el = kids[i];
+      if (!(el instanceof HTMLParagraphElement)) return null;
+      if (el.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) return null;
+      if (el.querySelector("table, ul, ol")) return null;
+      out.push(el);
+    }
+    return out.length >= 2 ? out : null;
+  }
+
+  private richWrapMultipleParagraphsAsTaskList(sel: Selection): boolean {
+    if (!this.richEditorEl || sel.rangeCount === 0 || sel.isCollapsed) return false;
+    const pars = this.collectRichTopLevelParagraphBlocksForTaskListRange(sel.getRangeAt(0));
+    if (!pars?.length) return false;
+    const ul = document.createElement("ul");
+    ul.classList.add("contains-task-list");
+    const ref = pars[0];
+    ref.parentNode?.insertBefore(ul, ref);
+    for (const p of pars) {
+      const li = document.createElement("li");
+      li.classList.add("task-list-item");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "task-list-item-checkbox";
+      li.appendChild(cb);
+      while (p.firstChild) li.appendChild(p.firstChild);
+      if (li.childNodes.length <= 1) li.appendChild(document.createElement("br"));
+      ul.appendChild(li);
+      p.remove();
+    }
+    sel.removeAllRanges();
+    const nr = document.createRange();
+    const firstCb = ul.querySelector("input.task-list-item-checkbox");
+    if (firstCb) {
+      nr.setStartAfter(firstCb);
+      nr.collapse(true);
+      sel.addRange(nr);
+    }
+    this.richEditorEl.focus({ preventScroll: true });
+    return true;
   }
 
   /**
@@ -2995,12 +3077,68 @@ export default class YoriEditorPlugin extends Plugin {
     if (!t || !this.richEditorEl.contains(t)) return;
   }
 
+  /** `[[payload]]` 返回 payload（含水合后 data-yori-wikilink 字面一致）；非维基语法返回 null。 */
+  private vaultWikiRawInnerBracketPayload(md: string): string | null {
+    const m = md.trim().match(/^\[\[([^\]]+)\]\]$/);
+    return m ? m[1].trim() : null;
+  }
+
+  /** 水合完成后执行一次：把光标移到刚插入的库链锚点之后。 */
+  private applyRichCaretAfterVaultWikiInsertIfPending(): void {
+    const ed = this.richEditorEl;
+    const rawInner = this.richPendingCaretAfterVaultWikiRawInner;
+    this.richPendingCaretAfterVaultWikiRawInner = null;
+    if (!ed || rawInner == null || rawInner === "") return;
+    let target: HTMLAnchorElement | null = null;
+    for (const a of Array.from(ed.querySelectorAll("a.internal-link[data-yori-wikilink]"))) {
+      if (!(a instanceof HTMLAnchorElement)) continue;
+      if ((a.getAttribute("data-yori-wikilink") ?? "").trim() === rawInner) {
+        target = a;
+      }
+    }
+    if (!target?.isConnected) return;
+    try {
+      const sel = window.getSelection();
+      if (!sel) return;
+      const r = document.createRange();
+      r.setStartAfter(target);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      ed.focus({ preventScroll: true });
+      this.scheduleRichSelectionVisualSync();
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** 在当前选区插入纯文本（如 ![[…]]），并触发脱水合调度 */
-  private insertRichPlainAtCaret(text: string, opts?: { skipRememberUndo?: boolean }): void {
+  private insertRichPlainAtCaret(
+    text: string,
+    opts?: { skipRememberUndo?: boolean; vaultWikiCaretAfter?: boolean }
+  ): void {
     const ed = this.richEditorEl;
     if (!ed) {
       new Notice("请先进入高级编辑模式。");
       return;
+    }
+    const vaultSnap = this.richVaultLinkSavedRange;
+    if (vaultSnap) {
+      try {
+        if (
+          vaultSnap.startContainer.isConnected &&
+          vaultSnap.endContainer.isConnected &&
+          ed.contains(vaultSnap.commonAncestorContainer)
+        ) {
+          const sel0 = window.getSelection();
+          if (sel0) {
+            sel0.removeAllRanges();
+            sel0.addRange(vaultSnap.cloneRange());
+          }
+        }
+      } catch {
+        /* ignore */
+      }
     }
     const ensureSelectionInEditor = (): void => {
       const sel = window.getSelection();
@@ -3040,6 +3178,11 @@ export default class YoriEditorPlugin extends Plugin {
           }
         }
       }
+    }
+    if (!opts?.vaultWikiCaretAfter) {
+      this.richPendingCaretAfterVaultWikiRawInner = null;
+    } else {
+      this.richPendingCaretAfterVaultWikiRawInner = this.vaultWikiRawInnerBracketPayload(text);
     }
     this.stripLegacyRichImageResizeWraps();
     this.ensureRichTrailingParagraph();
@@ -4243,7 +4386,7 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo();
+    this.rememberRichStateForUndo(true);
     const targets = this.collectRichBorderWrappersForSelection(true);
     if (!targets.length) {
       new Notice("请先选中段落后再调整边框粗细（表格单元格、列表项内不可用）。");
@@ -4310,6 +4453,68 @@ export default class YoriEditorPlugin extends Plugin {
     });
   }
 
+  /** 仅移除选区内前景色，不影响高亮背景 */
+  private stripRichForegroundColorStylesInRange(range: Range): void {
+    if (!this.richEditorEl) return;
+    const candidates = Array.from(this.richEditorEl.querySelectorAll<HTMLElement>("span, font")).filter((el) => {
+      try {
+        return (
+          range.intersectsNode(el) &&
+          (!!(el.style.color && el.style.color.trim()) || el.hasAttribute("color"))
+        );
+      } catch {
+        return false;
+      }
+    });
+    candidates.forEach((el) => {
+      el.style.removeProperty("color");
+      el.removeAttribute("color");
+      if (
+        (el.tagName === "SPAN" || el.tagName === "FONT") &&
+        !(el.style.cssText || "").trim() &&
+        el.attributes.length === 0
+      ) {
+        this.unwrapDomElement(el);
+      }
+    });
+  }
+
+  /** 仅移除选区内高亮（mark / 背景色），不改前景 color */
+  private stripRichHighlightStylesInRange(range: Range): void {
+    if (!this.richEditorEl) return;
+    const marks = Array.from(this.richEditorEl.querySelectorAll("mark")).filter((m) => {
+      try {
+        return range.intersectsNode(m);
+      } catch {
+        return false;
+      }
+    });
+    marks.sort((a, b) => {
+      if (a.contains(b)) return 1;
+      if (b.contains(a)) return -1;
+      return 0;
+    });
+    marks.forEach((m) => this.unwrapDomElement(m));
+
+    const spans = Array.from(this.richEditorEl.querySelectorAll<HTMLElement>("span[style], font[style]")).filter(
+      (el) => {
+        try {
+          if (!range.intersectsNode(el)) return false;
+          const bg = (el.style.backgroundColor || el.style.background || "").trim();
+          return !!bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)";
+        } catch {
+          return false;
+        }
+      }
+    );
+    spans.forEach((el) => {
+      el.style.removeProperty("background-color");
+      el.style.removeProperty("background");
+      if (!(el.style.cssText || "").trim()) el.removeAttribute("style");
+      if (el.tagName === "SPAN" && !el.attributes.length) this.unwrapDomElement(el);
+    });
+  }
+
   private clearRichTextColor(): void {
     if (!this.richEditorEl) {
       new Notice("请先进入高级编辑模式。");
@@ -4327,9 +4532,12 @@ export default class YoriEditorPlugin extends Plugin {
     }
     this.rememberRichStateForUndo();
     this.richEditorEl.focus();
-    const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
-    document.execCommand("removeFormat", false);
-    this.restoreTableCellBackgrounds(cellBgs);
+    const sel = window.getSelection();
+    if (sel?.rangeCount) {
+      const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
+      this.stripRichForegroundColorStylesInRange(sel.getRangeAt(0));
+      this.restoreTableCellBackgrounds(cellBgs);
+    }
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
@@ -4351,9 +4559,12 @@ export default class YoriEditorPlugin extends Plugin {
     }
     this.rememberRichStateForUndo();
     this.richEditorEl.focus();
-    const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
-    document.execCommand("removeFormat", false);
-    this.restoreTableCellBackgrounds(cellBgs);
+    const sel = window.getSelection();
+    if (sel?.rangeCount) {
+      const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
+      this.stripRichHighlightStylesInRange(sel.getRangeAt(0));
+      this.restoreTableCellBackgrounds(cellBgs);
+    }
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
@@ -4671,7 +4882,7 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo();
+    this.rememberRichStateForUndo(true);
     const targets = this.collectRichBorderWrappersForSelection(true);
     if (!targets.length) {
       new Notice("请先选中段落后再添加边框（表格单元格、列表项内不可用）。");
@@ -4693,7 +4904,7 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo();
+    this.rememberRichStateForUndo(true);
     const targets = this.collectRichBorderWrappersForSelection(true);
     if (!targets.length) {
       new Notice("请先选中段落后再设置边框颜色（表格单元格、列表项内不可用）。");
@@ -4719,7 +4930,7 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo();
+    this.rememberRichStateForUndo(true);
     const blocks = this.getSelectedRichBlocks();
     if (!blocks.length) {
       new Notice("请先选中段落后再清除边框。");
@@ -5265,8 +5476,40 @@ export default class YoriEditorPlugin extends Plugin {
     }
   }
 
+  /** 正文右键菜单弹出时调用：此时选区仍在，点击菜单项后常被清空。 */
+  private captureRichVaultLinkContextSnapshot(): void {
+    const ed = this.richEditorEl;
+    if (!ed) return;
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const r = sel.getRangeAt(0);
+    if (!ed.contains(r.commonAncestorContainer)) return;
+    this.richVaultLinkContextRange = r.cloneRange();
+  }
+
+  /** 点击「插入内部链接」时：用右键瞬间的快照填充插入选区（菜单点击后当前 Selection 往往已丢）。 */
+  private prepareRichVaultLinkInsertFromContextSnapshot(): void {
+    this.clearRichVaultLinkInsertSnapshot();
+    const ed = this.richEditorEl;
+    const ctx = this.richVaultLinkContextRange;
+    this.richVaultLinkContextRange = null;
+    if (!ed || !ctx) return;
+    try {
+      if (
+        ctx.startContainer.isConnected &&
+        ctx.endContainer.isConnected &&
+        ed.contains(ctx.commonAncestorContainer)
+      ) {
+        this.richVaultLinkSavedRange = ctx.cloneRange();
+      }
+    } catch {
+      /* 选区已失效 */
+    }
+  }
+
   /** 正文区（非表格、非内嵌图）右键：清除格式、内部链接、剪贴板。 */
   private openRichEditorStandardContextMenu(evt: MouseEvent): void {
+    this.captureRichVaultLinkContextSnapshot();
     const lang = this.uiLang();
     const bm = richBodyMenuStrings(lang);
     const menu = new Menu();
@@ -5275,7 +5518,10 @@ export default class YoriEditorPlugin extends Plugin {
       item.setTitle(bm.clearFormatting).setIcon("eraser").onClick(() => this.clearRichFormattingForSelectionOrCells())
     );
     menu.addItem((item) =>
-      item.setTitle(bm.insertInternalLink).setIcon("link").onClick(() => this.openVaultLinkPicker("rich", null))
+      item.setTitle(bm.insertInternalLink).setIcon("link").onClick(() => {
+        this.prepareRichVaultLinkInsertFromContextSnapshot();
+        this.openVaultLinkPicker("rich", null);
+      })
     );
     menu.addItem((item) =>
       item.setTitle(bm.insertNoteTag).setIcon("tag").onClick(() => {
@@ -5313,7 +5559,7 @@ export default class YoriEditorPlugin extends Plugin {
   private makeRichTagInsertHost(): RichTagInsertHost {
     return {
       restoreCaretForTagInsert: () => this.restoreRichCaretForTagInsert(),
-      insertRichPlainAtCaret: (t) => this.insertRichPlainAtCaret(t),
+      insertRichPlainAtCaret: (t, o) => this.insertRichPlainAtCaret(t, o),
       scheduleRichEditorHydratePasses: () => this.scheduleRichEditorHydratePasses(),
       clearTagInsertCaretSnapshot: () => this.clearRichTagInsertCaretSnapshot()
     };
@@ -5347,6 +5593,35 @@ export default class YoriEditorPlugin extends Plugin {
 
   private clearRichTagInsertCaretSnapshot(): void {
     this.richTagInsertSavedRange = null;
+  }
+
+  private captureRichCaretForVaultLinkInsert(): void {
+    const ed = this.richEditorEl;
+    if (!ed) return;
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const r = sel.getRangeAt(0);
+    if (!ed.contains(r.commonAncestorContainer)) return;
+    this.richVaultLinkSavedRange = r.cloneRange();
+  }
+
+  private restoreRichVaultLinkInsertSnapshot(): void {
+    const ed = this.richEditorEl;
+    const r = this.richVaultLinkSavedRange;
+    if (!ed || !r) return;
+    try {
+      const sel = window.getSelection();
+      if (!sel) return;
+      sel.removeAllRanges();
+      sel.addRange(r);
+      ed.focus({ preventScroll: true });
+    } catch {
+      /* 选区已失效 */
+    }
+  }
+
+  private clearRichVaultLinkInsertSnapshot(): void {
+    this.richVaultLinkSavedRange = null;
   }
 
   private getUnifiedCellBackgroundForColorUI(anchorCell: HTMLTableCellElement): string {
@@ -6946,6 +7221,17 @@ export default class YoriEditorPlugin extends Plugin {
     editor.addEventListener("focus", () => this.scheduleRichSelectionVisualSync());
     editor.addEventListener("focusin", () => this.scheduleRichSelectionVisualSync());
     editor.addEventListener("paste", (evt) => this.handleRichEditorPasteBareUrl(evt as ClipboardEvent), true);
+    editor.addEventListener(
+      "mousedown",
+      (evt) => {
+        if (evt.button !== 2 || !this.richEditorEl) return;
+        const t = richPointerTargetElement(evt);
+        if (!t || !this.richEditorEl.contains(t)) return;
+        // 早于 contextmenu：WebKit/Electron 常在弹出菜单前清空 Selection，此处仍能克隆选区
+        this.captureRichVaultLinkContextSnapshot();
+      },
+      true
+    );
     editor.addEventListener("contextmenu", (evt) => this.handleRichEditorContextMenu(evt), true);
 
     // 高级编辑区固定放在工具栏下方，避免被挂到页面底部出现错位。
@@ -7380,6 +7666,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.dedupeRedundantRichWikiTextAfterMediaBlocks();
     this.ensureRichTrailingParagraph();
     hydrateRichInlineTagsInRichEditor(this.richEditorEl);
+    this.applyRichCaretAfterVaultWikiInsertIfPending();
   }
 
   /**

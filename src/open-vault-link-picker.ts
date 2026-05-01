@@ -8,8 +8,11 @@ export interface VaultLinkPickerHost {
   richEditorEl: HTMLDivElement | null;
   resolveHydrationSourcePath(): string;
   markdownLinkForRichDroppedVaultFile(dest: TFile, sourcePath: string): string;
-  insertRichPlainAtCaret(text: string): void;
+  insertRichPlainAtCaret(text: string, opts?: { vaultWikiCaretAfter?: boolean }): void;
   scheduleRichEditorHydratePasses(): void;
+  /** 弹窗会抢走焦点导致选区丢失；插入前恢复右键/命令打开选择器时记录的插入位置 */
+  restoreRichVaultLinkInsertSnapshot?: () => void;
+  clearRichVaultLinkInsertSnapshot?: () => void;
 }
 
 export function openVaultLinkPickerModal(
@@ -29,6 +32,8 @@ export function openVaultLinkPickerModal(
   }
   const h = host;
   class VaultLinkPicker extends FuzzySuggestModal<TFile> {
+    private itemChosen = false;
+
     constructor() {
       super(h.app);
       this.setPlaceholder(L.placeholder);
@@ -43,15 +48,25 @@ export function openVaultLinkPickerModal(
     }
 
     onChooseItem(item: TFile): void {
+      this.itemChosen = true;
       const md = h.markdownLinkForRichDroppedVaultFile(item, sourcePath);
       if (mode === "rich") {
+        h.restoreRichVaultLinkInsertSnapshot?.();
         h.richEditorEl?.focus({ preventScroll: true });
-        h.insertRichPlainAtCaret(md);
+        h.insertRichPlainAtCaret(md, { vaultWikiCaretAfter: true });
+        h.clearRichVaultLinkInsertSnapshot?.();
         h.scheduleRichEditorHydratePasses();
       } else if (editor) {
         editor.replaceSelection(md);
       } else {
         new Notice(L.markdownNoEditor);
+      }
+    }
+
+    onClose(): void {
+      super.onClose();
+      if (mode === "rich" && !this.itemChosen) {
+        h.clearRichVaultLinkInsertSnapshot?.();
       }
     }
   }

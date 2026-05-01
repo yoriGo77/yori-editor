@@ -26,7 +26,7 @@ export const PALETTE_ROWS: PaletteRow[] = [
   {
     category: '棕灰',
     deep: { hex: '#a4a098', label: '深棕灰' },
-    medium: { hex: '#dfd7c9', label: '中棕灰' },
+    medium: { hex: '#f4f4f4', label: '中棕灰' },
     light: { hex: '#f4efe6', label: '浅棕灰' },
   },
   {

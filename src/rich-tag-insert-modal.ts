@@ -4,7 +4,7 @@ import { richTagInsertStrings, type YoriUiLang } from "./yori-locale";
 
 export type RichTagInsertHost = {
   restoreCaretForTagInsert(): void;
-  insertRichPlainAtCaret(text: string): void;
+  insertRichPlainAtCaret(text: string, opts?: { vaultWikiCaretAfter?: boolean }): void;
   scheduleRichEditorHydratePasses(): void;
   clearTagInsertCaretSnapshot(): void;
 };
