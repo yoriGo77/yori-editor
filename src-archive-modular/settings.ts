@@ -4,9 +4,9 @@ import type YoriEditorPlugin from './main';
 /**
  * 方案 A：笔记载体始终是 `.md`，卸载插件后用户仍可完全回归 Obsidian 自带 Markdown。
  * - native：源码模式下的工具栏增强（当前已实现）。
- * - advanced：未来将接入「同一文件」上的富文本编辑表面（参考 editor 副本6），不写独立扩展名。
+ * - advanced：未来将接入「同一文件」上的富文本编辑表面（与当前定位一致：功能更丰富的笔记编辑工具，支持自定义表格、字体颜色、对齐、字体高亮、段落边框等设置），不写独立扩展名。
  *
- * 借鉴说明：`editor副本6` 可作交互与「写回 MarkdownView」思路参考，避免大块迁移其源码，
+ * 借鉴说明：围绕上述定位的实现可作交互与「写回 MarkdownView」思路参考，避免大块迁移其源码，
  * 以免带入历史上难以定位的缺陷；新功能宜分模块重写并单独回归测试。
  */
 export type EditMode = 'native' | 'advanced';
