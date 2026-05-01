@@ -2682,6 +2682,7 @@ export default class YoriEditorPlugin extends Plugin {
         return;
       }
       if (this.richWrapMultipleParagraphsAsTaskList(sel0)) return;
+      if (this.richWrapParagraphMultiBrRunsAsTaskList(sel0)) return;
       if (this.richTryWrapParagraphBlockAsSingleTaskList(sel0)) return;
     }
     document.execCommand("insertUnorderedList", false);
@@ -2865,6 +2866,114 @@ export default class YoriEditorPlugin extends Plugin {
     return true;
   }
 
+  /** 顶层 &lt;p&gt; 内以直接子级 &lt;br&gt; 折行时，取消列表后常仍是「一段多行」；选区跨多行时应一条任务一行。 */
+  private paragraphTopLevelRunsSplitByBr(p: HTMLParagraphElement): Node[][] {
+    const runs: Node[][] = [];
+    let cur: Node[] = [];
+    for (const n of Array.from(p.childNodes)) {
+      if (n.nodeType === Node.ELEMENT_NODE && (n as HTMLElement).tagName === "BR") {
+        runs.push(cur);
+        cur = [];
+      } else {
+        cur.push(n);
+      }
+    }
+    runs.push(cur);
+    return runs;
+  }
+
+  private selectionIntersectsMultipleTopLevelBrRuns(
+    p: HTMLParagraphElement,
+    range: Range,
+    runs: Node[][]
+  ): boolean {
+    const touched = new Set<number>();
+    for (let i = 0; i < runs.length; i++) {
+      for (const n of runs[i]) {
+        try {
+          if (range.intersectsNode(n)) {
+            touched.add(i);
+            break;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return touched.size >= 2;
+  }
+
+  private rangeCoversParagraphContents(range: Range, p: HTMLParagraphElement): boolean {
+    try {
+      const inner = document.createRange();
+      inner.selectNodeContents(p);
+      return (
+        range.compareBoundaryPoints(Range.START_TO_START, inner) <= 0 &&
+        range.compareBoundaryPoints(Range.END_TO_END, inner) >= 0
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private richWrapParagraphMultiBrRunsAsTaskList(sel: Selection): boolean {
+    if (!this.richEditorEl || sel.rangeCount === 0 || sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    const startBlock = this.getRichTopLevelBlockElement(range.startContainer);
+    const endBlock = this.getRichTopLevelBlockElement(range.endContainer);
+    if (!startBlock || startBlock !== endBlock || !(startBlock instanceof HTMLParagraphElement)) {
+      return false;
+    }
+    const p = startBlock;
+    if (p.parentElement !== this.richEditorEl) return false;
+    if (p.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) return false;
+    if (p.closest("td, th")) return false;
+    if (p.querySelector("table, ul, ol")) return false;
+
+    const runs = this.paragraphTopLevelRunsSplitByBr(p);
+    if (runs.length < 2) return false;
+
+    const shouldSplit =
+      this.selectionIntersectsMultipleTopLevelBrRuns(p, range, runs) ||
+      this.rangeCoversParagraphContents(range, p);
+    if (!shouldSplit) return false;
+
+    const ul = document.createElement("ul");
+    ul.classList.add("contains-task-list");
+    p.parentNode?.insertBefore(ul, p);
+
+    for (const run of runs) {
+      const li = document.createElement("li");
+      li.classList.add("task-list-item");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "task-list-item-checkbox";
+      li.appendChild(cb);
+      if (run.length === 0) {
+        li.appendChild(document.createElement("br"));
+      } else {
+        for (const n of run) li.appendChild(n);
+      }
+      const afterCb = Array.from(li.childNodes).filter(
+        (n) => !(n instanceof HTMLInputElement && n.type === "checkbox")
+      );
+      if (afterCb.length === 0) li.appendChild(document.createElement("br"));
+      ul.appendChild(li);
+    }
+    p.remove();
+
+    sel.removeAllRanges();
+    const nr = document.createRange();
+    const firstCb = ul.querySelector("input.task-list-item-checkbox");
+    if (firstCb) {
+      nr.setStartAfter(firstCb);
+      nr.collapse(true);
+      sel.addRange(nr);
+    }
+    this.richEditorEl.focus({ preventScroll: true });
+    return true;
+  }
+
   /**
    * insertUnorderedList 在段内含多种字体等内联 span 时会把一行拆成多条 li；
    * 对单个顶层 &lt;p&gt; 改为整段迁入一条任务列表项。
@@ -2938,12 +3047,25 @@ export default class YoriEditorPlugin extends Plugin {
     }
   }
 
+  /** 任务列表项去掉复选框后收成段落（保留内联与 .yori-rich-task-li-body 等）。 */
+  private richTaskListItemToParagraph(li: HTMLLIElement): HTMLParagraphElement {
+    const p = document.createElement("p");
+    for (const ch of Array.from(li.childNodes)) {
+      if (ch instanceof HTMLInputElement && ch.type === "checkbox") continue;
+      p.appendChild(ch);
+    }
+    if (p.childNodes.length === 0) p.appendChild(document.createElement("br"));
+    return p;
+  }
+
   /**
-   * -toolbar 任务列表二次点击时避免再 insertUnorderedList 产生嵌套 ul；
-   * 将当前 li（及必要时仅含一项的 ul）收成普通段落。
+   * 工具栏任务列表二次点击：去掉任务列表包裹。
+   * 多行多项时按选区收集多个 li（原先只对锚点一项 unwrap，且 insertBefore(p, li) 的参照节点非法，
+   * 易落入 insertUnorderedList 路径导致 DOM 错乱与内容丢失）。
    */
   private richUnwrapTaskListAtCaret(sel: Selection): boolean {
     if (!this.richEditorEl || !sel.rangeCount) return false;
+    const range = sel.getRangeAt(0);
     const n0 = sel.anchorNode;
     const el0 = n0 instanceof Element ? n0 : n0?.parentElement;
     const li0 = el0?.closest("li");
@@ -2958,41 +3080,90 @@ export default class YoriEditorPlugin extends Plugin {
       return false;
     }
 
+    const lis = Array.from(ul0.children).filter(
+      (c): c is HTMLLIElement => c.tagName === "LI"
+    );
+    if (lis.length === 0) return false;
+
+    const selected = new Set<HTMLLIElement>();
+    if (!range.collapsed) {
+      for (const li of lis) {
+        try {
+          if (range.intersectsNode(li)) selected.add(li);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (selected.size === 0) selected.add(li0);
+
+    type Seg = { kind: "ps" | "ul"; lis: HTMLLIElement[] };
+    const segments: Seg[] = [];
+    let curPs: HTMLLIElement[] = [];
+    let curUl: HTMLLIElement[] = [];
+    const flushPs = () => {
+      if (curPs.length) {
+        segments.push({ kind: "ps", lis: curPs });
+        curPs = [];
+      }
+    };
+    const flushUl = () => {
+      if (curUl.length) {
+        segments.push({ kind: "ul", lis: curUl });
+        curUl = [];
+      }
+    };
+    for (const li of lis) {
+      if (selected.has(li)) {
+        flushUl();
+        curPs.push(li);
+      } else {
+        flushPs();
+        curUl.push(li);
+      }
+    }
+    flushPs();
+    flushUl();
+
     const parentOfUl = ul0.parentNode;
     if (!parentOfUl) return false;
 
-    const p = document.createElement("p");
-    for (const ch of Array.from(li0.childNodes)) {
-      if (ch instanceof HTMLInputElement && ch.type === "checkbox") continue;
-      p.appendChild(ch);
-    }
-    if (p.childNodes.length === 0) p.appendChild(document.createElement("br"));
-
-    if (ul0.children.length === 1) {
-      parentOfUl.insertBefore(p, ul0);
-      ul0.remove();
-    } else {
-      parentOfUl.insertBefore(p, li0);
-      li0.remove();
-      if (ul0.children.length === 0) {
-        ul0.remove();
-      } else {
-        let anyTask = false;
-        for (const c of Array.from(ul0.children)) {
-          if (c.tagName !== "LI") continue;
-          if (findTaskCheckboxOnDirectListItem(c as HTMLLIElement)) {
-            anyTask = true;
-            break;
-          }
+    const frag = document.createDocumentFragment();
+    for (const seg of segments) {
+      if (seg.kind === "ps") {
+        for (const li of seg.lis) {
+          frag.appendChild(this.richTaskListItemToParagraph(li));
+          li.remove();
         }
-        if (!anyTask) ul0.classList.remove("contains-task-list");
+      } else {
+        const nu = document.createElement("ul");
+        nu.classList.add("contains-task-list");
+        for (const li of seg.lis) nu.appendChild(li);
+        frag.appendChild(nu);
       }
     }
 
+    const firstInserted = frag.firstChild;
+    parentOfUl.insertBefore(frag, ul0);
+    ul0.remove();
+
     sel.removeAllRanges();
     const r = document.createRange();
-    r.selectNodeContents(p);
-    r.collapse(true);
+    if (firstInserted instanceof HTMLParagraphElement) {
+      r.selectNodeContents(firstInserted);
+      r.collapse(true);
+    } else if (firstInserted instanceof HTMLUListElement) {
+      const cb = firstInserted.querySelector(
+        "input.task-list-item-checkbox, input[type='checkbox']"
+      );
+      if (cb && cb.parentNode) {
+        r.setStartAfter(cb);
+        r.collapse(true);
+      } else {
+        r.selectNodeContents(firstInserted);
+        r.collapse(true);
+      }
+    }
     sel.addRange(r);
     return true;
   }
