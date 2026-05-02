@@ -133,7 +133,7 @@ export function registerYoriCommands(plugin: YoriEditorCommandsSelf): void {
   });
   p.addCommand({
     id: "callout",
-    name: "插入标注（Callout）",
+    name: "插入标注（callout）",
     editorCallback: () => p.runNativeOnly(["editor:insert-callout", "editor:callout"], "标注")
   });
   p.addCommand({

@@ -44,7 +44,7 @@ export function openYoriImageUrlAltModal(app: App): Promise<{ url: string; alt: 
         const { contentEl } = this;
         contentEl.empty();
         contentEl.createEl("p", {
-          text: "请输入图片链接（http/https 或 data URL）与说明（可选）。"
+          text: "请输入图片链接（HTTP/HTTPS 或 data URL）与说明（可选）。"
         });
         new Setting(contentEl).setName("链接").addText((t) => {
           this.urlField = t;

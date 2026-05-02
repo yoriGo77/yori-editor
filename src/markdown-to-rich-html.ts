@@ -2,6 +2,7 @@ import { sanitizeHTMLToDom } from "obsidian";
 
 import { escapeHtml } from "./rich-html-escape";
 import { yoriDetachedEl } from "./yori-detached-dom";
+import { yoriTrustedElementOuterHtml, yoriTrustedSubtreeInnerHtml } from "./yori-sanitize-html-dom";
 
 /**
  * 原生 Markdown 源里若已含 HTML（如从高级模式带回的 span/div），不应再整行 escape，否则高级里会看见字面量标签。
@@ -28,7 +29,7 @@ export function richInlineTextFromMarkdownSegment(segment: string): string {
     try {
       const doc = new DOMParser().parseFromString(`<span>${s}</span>`, "text/html");
       const span = doc.body.querySelector("span");
-      if (span) return span.innerHTML;
+      if (span?.instanceOf(HTMLElement)) return yoriTrustedSubtreeInnerHtml(span);
     } catch {
       /* fall through */
     }
@@ -51,7 +52,7 @@ export function lineToInitialRichParagraphHtml(line: string): string {
     if (p.childNodes.length === 0) {
       return "<p><br></p>";
     }
-    return p.outerHTML;
+    return yoriTrustedElementOuterHtml(p);
   } catch {
     return `<p>${escapeHtml(line)}</p>`;
   }

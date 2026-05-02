@@ -43,25 +43,5 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off"
     }
-  },
-  {
-    files: ["src/embed-hydrate-text-nodes.ts"],
-    rules: {
-      "obsidianmd/no-static-styles-assignment": "off",
-      "no-useless-escape": "off"
-    }
-  },
-  {
-    files: ["main.ts"],
-    rules: {
-      "obsidianmd/no-static-styles-assignment": "off",
-      "no-useless-escape": "off"
-    }
-  },
-  {
-    files: ["src/register-commands.ts", "src/yori-prompt-modals.ts"],
-    rules: {
-      "obsidianmd/ui/sentence-case": "off"
-    }
   }
 );

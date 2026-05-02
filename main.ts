@@ -172,10 +172,26 @@ import {
 
 import { openYoriConfirmModal, openYoriImageUrlAltModal } from "./src/yori-prompt-modals";
 import {
+  yoriApplyStyleProps,
   yoriFillCheckboxBrCell,
   yoriFillWithSingleBr,
-  yoriReplaceChildrenFromSanitizedHtml
+  yoriReplaceChildrenFromSanitizedHtml,
+  YORI_HIDDEN_FILE_INPUT_CSS,
+  yoriTrustedSubtreeInnerHtml
 } from "./src/yori-sanitize-html-dom";
+
+const YORI_STYLE_FIXED_LAYOUT = "fixed";
+const YORI_STYLE_FULL_PCT = "100%";
+const YORI_STYLE_AUTO = "auto";
+const YORI_STYLE_NONE = "none";
+const YORI_CURSOR_COL_RESIZE = "col-resize";
+const YORI_CURSOR_ROW_RESIZE = "row-resize";
+const YORI_COLOR_INHERIT = "inherit";
+const YORI_CSS_PROP_COLOR = "color";
+const YORI_PDF_EMBED_MAX_HEIGHT = "min(88vh, 960px)";
+const YORI_FONT_WEIGHT_BOLD = "700";
+const YORI_FONT_STYLE_ITALIC = "italic";
+const YORI_DISPLAY_BLOCK = "block";
 
 /* eslint-disable @typescript-eslint/no-deprecated -- Rich editor relies on execCommand, queryCommandValue, and caret helpers for contenteditable in Electron. */
 
@@ -1425,7 +1441,7 @@ export default class YoriEditorPlugin extends Plugin {
         yoriFillCheckboxBrCell(srcCell, checked);
       }
 
-      const nextInner = root.innerHTML;
+      const nextInner = yoriTrustedSubtreeInnerHtml(root);
       const nextBody = `${prefix}${this.richBlockStart}\n${nextInner}\n${this.richBlockEnd}${suffix}`;
 
       const nextFull =
@@ -1475,7 +1491,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (checked) srcCb.setAttribute("checked", "");
       else srcCb.removeAttribute("checked");
 
-      const nextInner = root.innerHTML;
+      const nextInner = yoriTrustedSubtreeInnerHtml(root);
       const nextBody = `${prefix}${this.richBlockStart}\n${nextInner}\n${this.richBlockEnd}${suffix}`;
       const nextFull =
         !frontmatter ? nextBody : `${frontmatter}${frontmatter.endsWith("\n") ? "" : "\n"}${nextBody}`;
@@ -2519,13 +2535,15 @@ export default class YoriEditorPlugin extends Plugin {
     };
     for (const cell of cells) {
       for (const el of targetsForCell(cell)) {
+        const propFontWeight = "font-weight";
+        const propFontStyle = "font-style";
         if (command === "bold") {
-          if (turnOn) el.setCssProps({ "font-weight": "700" });
+          if (turnOn) yoriApplyStyleProps(el, { [propFontWeight]: YORI_FONT_WEIGHT_BOLD });
           else el.style.removeProperty("font-weight");
           continue;
         }
         if (command === "italic") {
-          if (turnOn) el.setCssProps({ "font-style": "italic" });
+          if (turnOn) yoriApplyStyleProps(el, { [propFontStyle]: YORI_FONT_STYLE_ITALIC });
           else el.style.removeProperty("font-style");
           continue;
         }
@@ -3577,7 +3595,7 @@ export default class YoriEditorPlugin extends Plugin {
     const input = yoriDetachedEl("input");
     input.type = "file";
     input.multiple = true;
-    input.style.cssText = "position:fixed;left:-9999px;opacity:0;pointer-events:none;width:0;height:0;";
+    input.style.cssText = YORI_HIDDEN_FILE_INPUT_CSS;
     activeDocument.body.appendChild(input);
     this.attachmentFileInputEl = input;
     return input;
@@ -5847,7 +5865,7 @@ export default class YoriEditorPlugin extends Plugin {
       const mark = yoriDetachedEl("mark");
       mark.style.backgroundColor = color;
       // 浏览器默认样式 mark { color: black } 会盖住单元格/span 上的前景色
-      mark.style.setProperty("color", "inherit");
+      yoriApplyStyleProps(mark, { [YORI_CSS_PROP_COLOR]: YORI_COLOR_INHERIT });
       mark.appendChild(yoriDetachedEl("br"));
       cell.appendChild(mark);
       return;
@@ -5855,7 +5873,7 @@ export default class YoriEditorPlugin extends Plugin {
     const contents = range.extractContents();
     const mark = yoriDetachedEl("mark");
     mark.style.backgroundColor = color;
-    mark.style.setProperty("color", "inherit");
+    yoriApplyStyleProps(mark, { [YORI_CSS_PROP_COLOR]: YORI_COLOR_INHERIT });
     mark.appendChild(contents);
     cell.appendChild(mark);
   }
@@ -5870,7 +5888,7 @@ export default class YoriEditorPlugin extends Plugin {
     const start = sel.anchorNode.instanceOf(Element) ? sel.anchorNode : sel.anchorNode.parentElement;
     let el: HTMLElement | null = start?.closest("mark") ?? null;
     while (el) {
-      if (!el.style.color) el.style.setProperty("color", "inherit");
+      if (!el.style.color) yoriApplyStyleProps(el, { [YORI_CSS_PROP_COLOR]: YORI_COLOR_INHERIT });
       el = el.parentElement?.closest("mark") ?? null;
     }
   }
@@ -6502,7 +6520,8 @@ export default class YoriEditorPlugin extends Plugin {
             cls: "yori-rich-table-color-swatch",
             attr: { "aria-label": tm.ariaBorderColor(hex), title: hex }
           });
-          swatch.setCssProps({ "background-color": hex });
+          const propBg = "background-color";
+          yoriApplyStyleProps(swatch, { [propBg]: hex });
           if (selectedColor && normalizeColor(hex) === selectedColor) {
             swatch.addClass("is-active");
           }
@@ -6681,7 +6700,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.rememberRichStateForUndo();
     const startW = img.getBoundingClientRect().width;
     this.richImageResizeSession = { img, startX: evt.clientX, startW };
-    activeDocument.body.style.userSelect = "none";
+    activeDocument.body.style.userSelect = YORI_STYLE_NONE;
 
     const onMove = (e: MouseEvent): void => {
       const s = this.richImageResizeSession;
@@ -6690,8 +6709,8 @@ export default class YoriEditorPlugin extends Plugin {
       let nw = s.startW + dw;
       nw = Math.max(32, Math.min(4096, nw));
       s.img.style.maxWidth = `${nw}px`;
-      s.img.style.width = "100%";
-      s.img.style.height = "auto";
+      s.img.style.width = YORI_STYLE_FULL_PCT;
+      s.img.style.height = YORI_STYLE_AUTO;
     };
     const onUp = (): void => {
       const s = this.richImageResizeSession;
@@ -6777,7 +6796,7 @@ export default class YoriEditorPlugin extends Plugin {
 
     const ordered = [...positions].sort((a, b) => (a.pos.row - b.pos.row) || (a.pos.col - b.pos.col));
     const mergedHtml = ordered
-      .map((entry) => entry.cell.innerHTML.trim())
+      .map((entry) => yoriTrustedSubtreeInnerHtml(entry.cell).trim())
       .filter((s) => s.length > 0)
       .join("<br>");
     if (mergedHtml) {
@@ -6970,7 +6989,14 @@ export default class YoriEditorPlugin extends Plugin {
     const img = cell.createEl("img");
     img.setAttr("src", safeUrl);
     img.setAttr("alt", res.alt);
-    img.setCssProps({ "max-width": "100%", height: "auto", display: "block" });
+    const kMw = "max-width";
+    const kH = "height";
+    const kD = "display";
+    yoriApplyStyleProps(img, {
+      [kMw]: YORI_STYLE_FULL_PCT,
+      [kH]: YORI_STYLE_AUTO,
+      [kD]: YORI_DISPLAY_BLOCK
+    });
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
@@ -7271,7 +7297,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.richResizeNeighborStartSize = 0;
       this.richResizeTableStartWidth = 0;
       this.richEditorEl.removeClass("is-table-resizing");
-      this.richEditorEl.style.cursor = "";
+      this.richEditorEl.style.removeProperty("cursor");
       this.markRichDirty();
       this.scheduleRichAutoSave();
       return;
@@ -7288,7 +7314,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.scheduleRichSelectionVisualSync();
       return;
     }
-    this.richEditorEl.style.cursor = "";
+    this.richEditorEl.style.removeProperty("cursor");
   }
 
   private clearRichTableDragSelection(): void {
@@ -7301,13 +7327,13 @@ export default class YoriEditorPlugin extends Plugin {
   private updateRichResizeCursor(cell: HTMLTableCellElement | null, evt: MouseEvent): void {
     if (!this.richEditorEl) return;
     if (!cell) {
-      this.richEditorEl.style.cursor = "";
+      this.richEditorEl.style.removeProperty("cursor");
       return;
     }
     const hit = this.getRichTableResizeHit(cell, evt);
-    if (hit === "col") this.richEditorEl.style.cursor = "col-resize";
-    else if (hit === "row") this.richEditorEl.style.cursor = "row-resize";
-    else this.richEditorEl.style.cursor = "";
+    if (hit === "col") this.richEditorEl.style.cursor = YORI_CURSOR_COL_RESIZE;
+    else if (hit === "row") this.richEditorEl.style.cursor = YORI_CURSOR_ROW_RESIZE;
+    else this.richEditorEl.style.removeProperty("cursor");
   }
 
   private getRichTableResizeHit(cell: HTMLTableCellElement, evt: MouseEvent): "col" | "row" | null {
@@ -7348,7 +7374,7 @@ export default class YoriEditorPlugin extends Plugin {
         colEl.style.minWidth = `${width}px`;
       }
     }
-    table.style.tableLayout = "fixed";
+    table.style.tableLayout = YORI_STYLE_FIXED_LAYOUT;
     table.style.width = `${Math.round(table.getBoundingClientRect().width)}px`;
   }
 
@@ -7418,7 +7444,7 @@ export default class YoriEditorPlugin extends Plugin {
       totalWidth += width;
     }
     if (totalWidth > 0) {
-      table.style.tableLayout = "fixed";
+      table.style.tableLayout = YORI_STYLE_FIXED_LAYOUT;
       table.style.width = `${totalWidth}px`;
     }
   }
@@ -7444,9 +7470,9 @@ export default class YoriEditorPlugin extends Plugin {
       colEl.style.width = `${pct}%`;
       colEl.style.removeProperty("min-width");
     }
-    table.style.tableLayout = "fixed";
-    table.style.width = "100%";
-    table.style.maxWidth = "100%";
+    table.style.tableLayout = YORI_STYLE_FIXED_LAYOUT;
+    table.style.width = YORI_STYLE_FULL_PCT;
+    table.style.maxWidth = YORI_STYLE_FULL_PCT;
   }
 
   private normalizeAllRichTables(): void {
@@ -8218,7 +8244,7 @@ export default class YoriEditorPlugin extends Plugin {
     const acceptWiki = (node: Node): number => {
       if (commonReject(node)) return NodeFilter.FILTER_REJECT;
       const v = node.nodeValue;
-      return v && v.includes("[[") && /(?<!\!)\[\[[^\[\]]+\]\]/.test(v)
+      return v && v.includes("[[") && /(?<!!)\[\[[^\]]+\]\]/.test(v)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     };
@@ -8261,10 +8287,10 @@ export default class YoriEditorPlugin extends Plugin {
       const ph = viewport.height;
       if (!(pw > 0 && ph > 0) || !Number.isFinite(pw) || !Number.isFinite(ph)) return;
       box.style.aspectRatio = `${pw} / ${ph}`;
-      box.style.width = "100%";
-      box.style.maxWidth = "100%";
-      box.style.maxHeight = "min(88vh, 960px)";
-      box.style.height = "auto";
+      box.style.width = YORI_STYLE_FULL_PCT;
+      box.style.maxWidth = YORI_STYLE_FULL_PCT;
+      box.style.maxHeight = YORI_PDF_EMBED_MAX_HEIGHT;
+      box.style.height = YORI_STYLE_AUTO;
       box.classList.add("yori-rich-pdf-embed--sized");
     } catch {
       /* 加密/损坏/解析失败：沿用未加 --sized 时的 CSS */

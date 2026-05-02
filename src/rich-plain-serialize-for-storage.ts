@@ -2,6 +2,8 @@
  * 高级编辑保存路径：根下若仅为简单纯文本段落，可落成「每段一行」字符串以缩小磁盘 HTML。
  */
 
+import { yoriTrustedSubtreeInnerHtml } from "./yori-sanitize-html-dom";
+
 export function richPlainParagraphToStorageLine(p: HTMLParagraphElement): string | null {
   for (const node of Array.from(p.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) continue;
@@ -44,5 +46,5 @@ export function trySerializeRichRootAsPlainLineText(root: HTMLElement): string |
 /** 脱水后的 clone：能简化则返回「每段一行」的纯文本，否则返回 innerHTML。 */
 export function pickYoriInnerStorageFromDehydratedClone(clone: HTMLElement): string {
   const plain = trySerializeRichRootAsPlainLineText(clone);
-  return plain !== null ? plain : clone.innerHTML;
+  return plain !== null ? plain : yoriTrustedSubtreeInnerHtml(clone);
 }

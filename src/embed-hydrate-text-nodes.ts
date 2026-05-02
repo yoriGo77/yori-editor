@@ -7,7 +7,33 @@ import {
   YORI_RICH_INLINE_TAG_CLASS
 } from "./yori-constants";
 import { yoriDetachedEl } from "./yori-detached-dom";
+import { yoriApplyStyleProps } from "./yori-sanitize-html-dom";
 
+const CSS_K_MW = "max-width";
+const CSS_K_W = "width";
+const CSS_K_H = "height";
+const CSS_K_D = "display";
+const CSS_V_FULL = "100%";
+const CSS_V_AUTO = "auto";
+const CSS_V_BLOCK = "block";
+
+function yoriHydrateImageSizing(img: HTMLImageElement, widthPx: number | null): void {
+  if (widthPx != null) {
+    yoriApplyStyleProps(img, {
+      [CSS_K_MW]: `${widthPx}px`,
+      [CSS_K_W]: CSS_V_FULL,
+      [CSS_K_H]: CSS_V_AUTO,
+      [CSS_K_D]: CSS_V_BLOCK
+    });
+  } else {
+    yoriApplyStyleProps(img, {
+      [CSS_K_MW]: CSS_V_FULL,
+      [CSS_K_W]: "",
+      [CSS_K_H]: CSS_V_AUTO,
+      [CSS_K_D]: CSS_V_BLOCK
+    });
+  }
+}
 /** 文本节点内 `![[…]]` / 预览 `[[图]]` 水合所需回调（由插件通过 embedHydrateHost() 注入）。 */
 export interface EmbedHydrateInTextNodeHost {
   parseNumericEmbedWidthSuffix(s: string): number | null;
@@ -36,7 +62,7 @@ export function hydratePreviewImageEmbeds(root: HTMLElement, pathHint: string, h
   const accept2 = (node: Node): number => {
     if (baseReject(node)) return NodeFilter.FILTER_REJECT;
     const v = node.nodeValue;
-    return v && /(?<!\!)\[\[[^\]]+\]\]/.test(v) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    return v && /(?<!!)\[\[[^\]]+\]\]/.test(v) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
   };
   const run = (accept: (n: Node) => number, fn: (t: Text) => void): void => {
     const w = activeDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
@@ -56,7 +82,7 @@ function replacePlainWikiImageEmbedsInTextNodeForPreview(
   host: EmbedHydrateInTextNodeHost
 ): void {
   const text = textNode.nodeValue ?? "";
-  const re = /(?<!\!)\[\[([^\[\]]+)\]\]/g;
+  const re = /(?<!!)\[\[([^\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
   const frag = createFragment();
@@ -83,15 +109,7 @@ function replacePlainWikiImageEmbedsInTextNodeForPreview(
       const img = yoriDetachedEl("img");
       img.src = host.vaultResourcePath(dest);
       img.alt = dest.basename;
-      if (widthPx != null) {
-        img.style.maxWidth = `${widthPx}px`;
-        img.style.width = "100%";
-      } else {
-        img.style.maxWidth = "100%";
-        img.style.width = "";
-      }
-      img.style.height = "auto";
-      img.style.display = "block";
+      yoriHydrateImageSizing(img, widthPx);
       frag.appendChild(img);
     } else {
       frag.appendChild(activeDocument.createTextNode(m[0]));
@@ -111,7 +129,7 @@ export function replaceImageEmbedsInTextNode(
   host: EmbedHydrateInTextNodeHost
 ): void {
   const text = textNode.nodeValue ?? "";
-  const re = /!\[\[([^\[\]]+)\]\]/g;
+  const re = /!\[\[([^\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
   const frag = createFragment();
@@ -141,15 +159,7 @@ export function replaceImageEmbedsInTextNode(
       }
       img.src = host.vaultResourcePath(dest);
       img.alt = dest.basename;
-      if (widthPx != null) {
-        img.style.maxWidth = `${widthPx}px`;
-        img.style.width = "100%";
-      } else {
-        img.style.maxWidth = "100%";
-        img.style.width = "";
-      }
-      img.style.height = "auto";
-      img.style.display = "block";
+      yoriHydrateImageSizing(img, widthPx);
       frag.appendChild(host.wrapRichMediaBlock(host.wrapRichImageWithResizeHost(img)));
     } else if (dest instanceof TFile && ATTACHMENT_VIDEO_EXTENSIONS.has(ext)) {
       const video = yoriDetachedEl("video");
@@ -159,10 +169,12 @@ export function replaceImageEmbedsInTextNode(
       video.src = host.vaultResourcePath(dest);
       video.controls = true;
       video.preload = "metadata";
-      video.style.maxWidth = "100%";
-      video.style.width = "100%";
-      video.style.height = "auto";
-      video.style.display = "block";
+      yoriApplyStyleProps(video, {
+        [CSS_K_MW]: CSS_V_FULL,
+        [CSS_K_W]: CSS_V_FULL,
+        [CSS_K_H]: CSS_V_AUTO,
+        [CSS_K_D]: CSS_V_BLOCK
+      });
       frag.appendChild(host.wrapRichMediaBlock(video));
     } else if (dest instanceof TFile && ATTACHMENT_AUDIO_EXTENSIONS.has(ext)) {
       const audio = yoriDetachedEl("audio");
@@ -172,8 +184,7 @@ export function replaceImageEmbedsInTextNode(
       audio.src = host.vaultResourcePath(dest);
       audio.controls = true;
       audio.preload = "metadata";
-      audio.style.width = "100%";
-      audio.style.display = "block";
+      yoriApplyStyleProps(audio, { [CSS_K_W]: CSS_V_FULL, [CSS_K_D]: CSS_V_BLOCK });
       frag.appendChild(host.wrapRichMediaBlock(audio));
     } else if (dest instanceof TFile && ATTACHMENT_PDF_EXTENSIONS.has(ext)) {
       const box = yoriDetachedEl("div");
@@ -211,7 +222,7 @@ export function replaceWikilinksInTextNodeForHydrate(
   host: EmbedHydrateInTextNodeHost
 ): void {
   const text = textNode.nodeValue ?? "";
-  const re = /(?<!\!)\[\[([^\[\]]+)\]\]/g;
+  const re = /(?<!!)\[\[([^\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
   const frag = createFragment();
@@ -239,15 +250,7 @@ export function replaceWikilinksInTextNodeForHydrate(
       img.setAttribute("data-yori-image-embed", rawInner);
       img.src = host.vaultResourcePath(dest);
       img.alt = dest.basename;
-      if (widthPx != null) {
-        img.style.maxWidth = `${widthPx}px`;
-        img.style.width = "100%";
-      } else {
-        img.style.maxWidth = "100%";
-        img.style.width = "";
-      }
-      img.style.height = "auto";
-      img.style.display = "block";
+      yoriHydrateImageSizing(img, widthPx);
       frag.appendChild(host.wrapRichMediaBlock(host.wrapRichImageWithResizeHost(img)));
       last = m.index + m[0].length;
       continue;
