@@ -1,4 +1,7 @@
+import { sanitizeHTMLToDom } from "obsidian";
+
 import { escapeHtml } from "./rich-html-escape";
+import { yoriDetachedEl } from "./yori-detached-dom";
 
 /**
  * 原生 Markdown 源里若已含 HTML（如从高级模式带回的 span/div），不应再整行 escape，否则高级里会看见字面量标签。
@@ -39,9 +42,9 @@ export function lineToInitialRichParagraphHtml(line: string): string {
     return `<p>${escapeHtml(line)}</p>`;
   }
   try {
-    const holder = document.createElement("div");
-    holder.innerHTML = line;
-    const p = document.createElement("p");
+    const holder = yoriDetachedEl("div");
+    holder.appendChild(sanitizeHTMLToDom(line));
+    const p = yoriDetachedEl("p");
     while (holder.firstChild) {
       p.appendChild(holder.firstChild);
     }

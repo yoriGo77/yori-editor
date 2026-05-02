@@ -1,5 +1,6 @@
 /** 高级编辑区内：表格单元格与 document selection 相关的 DOM 辅助（不含插件状态）。 */
 
+import { yoriDetachedEl } from "./yori-detached-dom";
 export function getRichTableCellFromSelection(richEditorRoot: HTMLElement | null): HTMLTableCellElement | null {
   if (!richEditorRoot) return null;
   const sel = window.getSelection();
@@ -8,7 +9,7 @@ export function getRichTableCellFromSelection(richEditorRoot: HTMLElement | null
   if (!node || !richEditorRoot.contains(node)) return null;
   let depth = 0;
   while (node && depth++ < 30) {
-    if (node instanceof HTMLTableCellElement && node.matches("td, th")) return node;
+    if (node.instanceOf(HTMLTableCellElement) && node.matches("td, th")) return node;
     node = node.parentNode;
   }
   return null;
@@ -26,7 +27,7 @@ export function selectionTouchesRichTableCell(richEditorRoot: HTMLElement | null
       let n: Node | null = seed;
       let depth = 0;
       while (n && depth++ < 48 && n !== richEditorRoot) {
-        if (n instanceof Element && (n.tagName === "TD" || n.tagName === "TH")) return true;
+        if (n.instanceOf(Element) && (n.tagName === "TD" || n.tagName === "TH")) return true;
         n = n.parentNode;
       }
     }
@@ -49,7 +50,7 @@ export function findRichTableCellTouchingSelectionRange(
       let n: Node | null = seed;
       let depth = 0;
       while (n && depth++ < 48 && n !== richEditorRoot) {
-        if (n instanceof Element && (n.tagName === "TD" || n.tagName === "TH")) {
+        if (n.instanceOf(Element) && (n.tagName === "TD" || n.tagName === "TH")) {
           const c = n as HTMLTableCellElement;
           return richEditorRoot.contains(c) ? c : null;
         }
@@ -67,20 +68,20 @@ export function getAdjacentRichTableCell(
   dir: "next" | "prev"
 ): HTMLTableCellElement | null {
   const row = cell.parentElement as HTMLTableRowElement | null;
-  const table = cell.closest("table") as HTMLTableElement | null;
+  const table = cell.closest("table");
   if (!row || !table) return null;
   const idx = cell.cellIndex;
   if (dir === "next") {
-    if (idx + 1 < row.cells.length) return row.cells[idx + 1] as HTMLTableCellElement;
+    if (idx + 1 < row.cells.length) return row.cells[idx + 1];
     let r = row.nextElementSibling as HTMLTableRowElement | null;
     while (r && r.cells.length === 0) r = r.nextElementSibling as HTMLTableRowElement | null;
     return (r?.cells[0] as HTMLTableCellElement) ?? null;
   }
-  if (idx > 0) return row.cells[idx - 1] as HTMLTableCellElement;
+  if (idx > 0) return row.cells[idx - 1];
   let r = row.previousElementSibling as HTMLTableRowElement | null;
   while (r && r.cells.length === 0) r = r.previousElementSibling as HTMLTableRowElement | null;
   if (!r) return null;
-  return r.cells[r.cells.length - 1] as HTMLTableCellElement;
+  return r.cells[r.cells.length - 1];
 }
 
 export function focusRichTableCell(
@@ -91,9 +92,9 @@ export function focusRichTableCell(
   if (!richEditorRoot?.contains(cell)) return;
   richEditorRoot.focus();
   if (cell.childNodes.length === 0) {
-    cell.appendChild(document.createElement("br"));
+    cell.appendChild(yoriDetachedEl("br"));
   }
-  const range = document.createRange();
+  const range = activeDocument.createRange();
   range.selectNodeContents(cell);
   range.collapse(position === "start");
   const sel = window.getSelection();
@@ -126,9 +127,9 @@ export function restoreCaretAfterRichTaskListInTableCells(
   try {
     const cb = targetCell.querySelector(
       ":scope ul.contains-task-list > li.task-list-item > input.task-list-item-checkbox, :scope ul.contains-task-list > li.task-list-item > input[type='checkbox']"
-    ) as HTMLInputElement | null;
+    ) as unknown as HTMLInputElement | null;
     if (cb && cb.type === "checkbox") {
-      const range = document.createRange();
+      const range = activeDocument.createRange();
       range.setStartAfter(cb);
       range.collapse(true);
       sel.removeAllRanges();

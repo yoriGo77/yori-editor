@@ -25,13 +25,13 @@ export interface YoriEditorCommandsSelf {
   applyMarkdownTaskListFromUser(editor: Editor | undefined): void;
   pickLocalFilesForAttachment(): void;
 
-  runRichCommand(command: string, value?: string): void;
+  runRichCommand(command: string, value?: string): void | Promise<void>;
   cycleRichAlignmentFromCurrent(): void;
-  applyRichHighlightColor(color: string): void;
-  applyRichTextColor(color: string): void;
+  applyRichHighlightColor(color: string): void | Promise<void>;
+  applyRichTextColor(color: string): void | Promise<void>;
   applyRichFontFamily(value: string): void;
   applyRichFontSize(value: string): void;
-  runRichInsertHtml(html: string): void;
+  runRichInsertHtml(html: string): void | Promise<void>;
   openVaultLinkPicker(mode: "rich" | "markdown", editor: Editor | null | undefined): void;
   getActiveEditor(): Editor | null;
   applyRichLineSpacing(lineHeight: string | null): void;
@@ -167,22 +167,22 @@ export function registerYoriCommands(plugin: YoriEditorCommandsSelf): void {
   p.addCommand({
     id: "rich-bold",
     name: "高级编辑：加粗",
-    callback: () => p.runRichCommand("bold")
+    callback: () => void p.runRichCommand("bold")
   });
   p.addCommand({
     id: "rich-italic",
     name: "高级编辑：倾斜",
-    callback: () => p.runRichCommand("italic")
+    callback: () => void p.runRichCommand("italic")
   });
   p.addCommand({
     id: "rich-underline",
     name: "高级编辑：下划线",
-    callback: () => p.runRichCommand("underline")
+    callback: () => void p.runRichCommand("underline")
   });
   p.addCommand({
     id: "rich-strike",
     name: "高级编辑：删除线",
-    callback: () => p.runRichCommand("strikeThrough")
+    callback: () => void p.runRichCommand("strikeThrough")
   });
   p.addCommand({
     id: "rich-align-cycle",
@@ -192,12 +192,12 @@ export function registerYoriCommands(plugin: YoriEditorCommandsSelf): void {
   p.addCommand({
     id: "rich-highlight",
     name: "高级编辑：高亮（上次颜色）",
-    callback: () => p.applyRichHighlightColor(p.settings.lastHighlightColor)
+    callback: () => void p.applyRichHighlightColor(p.settings.lastHighlightColor)
   });
   p.addCommand({
     id: "rich-text-color",
     name: "高级编辑：文字颜色（上次颜色）",
-    callback: () => p.applyRichTextColor(p.settings.lastTextColor)
+    callback: () => void p.applyRichTextColor(p.settings.lastTextColor)
   });
   p.addCommand({
     id: "rich-font-family",
@@ -212,30 +212,30 @@ export function registerYoriCommands(plugin: YoriEditorCommandsSelf): void {
   p.addCommand({
     id: "rich-bullet-list",
     name: "高级编辑：项目符号",
-    callback: () => p.runRichCommand("insertUnorderedList")
+    callback: () => void p.runRichCommand("insertUnorderedList")
   });
   p.addCommand({
     id: "rich-numbered-list",
     name: "高级编辑：编号列表",
-    callback: () => p.runRichCommand("insertOrderedList")
+    callback: () => void p.runRichCommand("insertOrderedList")
   });
   p.addCommand({
     id: "rich-task-list",
     name: "高级编辑：任务列表",
-    callback: () => p.runRichCommand("insertTaskList")
+    callback: () => void p.runRichCommand("insertTaskList")
   });
   p.addCommand({
     id: "rich-insert-table",
     name: "高级编辑：插入表格",
     callback: () =>
-      p.runRichInsertHtml(
+      void p.runRichInsertHtml(
         "<table><tr><th>标题1</th><th>标题2</th><th>标题3</th></tr><tr><td><br></td><td><br></td><td><br></td></tr></table><p><br></p>"
       )
   });
   p.addCommand({
     id: "rich-divider",
     name: "高级编辑：插入分隔线",
-    callback: () => p.runRichInsertHtml("<hr />")
+    callback: () => void p.runRichInsertHtml("<hr />")
   });
   p.addCommand({
     id: "insert-vault-link",

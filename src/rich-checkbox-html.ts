@@ -5,11 +5,12 @@
 /** 从磁盘/撤销栈注入 innerHTML 后，将 checked 属性同步到 IDL（少数环境在表格等场景下初始 property 不准）。 */
 export function applyRichCheckboxCheckedStateFromAttributesAfterLoad(root: HTMLElement | null): void {
   if (!root) return;
-  for (const inp of Array.from(root.querySelectorAll('input[type="checkbox"]'))) {
-    if (!(inp instanceof HTMLInputElement)) continue;
-    const a = inp.getAttribute("checked");
-    inp.checked = inp.hasAttribute("checked") && a !== "false";
-    inp.defaultChecked = inp.checked;
+  for (const node of Array.from(root.querySelectorAll('input[type="checkbox"]'))) {
+    if (!(node.instanceOf(HTMLInputElement))) continue;
+    const box = node as unknown as HTMLInputElement;
+    const a = box.getAttribute("checked");
+    box.checked = box.hasAttribute("checked") && a !== "false";
+    box.defaultChecked = box.checked;
   }
 }
 
@@ -45,13 +46,14 @@ export function extractRichCheckboxCheckedFlagsFromHtmlFragment(html: string): b
 /** 按文档中 checkbox 出现顺序，把源码中的勾选意图写回 DOM（与 extract 配套）。 */
 export function applyRichCheckboxCheckedFlagsToEditorInTreeOrder(root: HTMLElement | null, flags: boolean[]): void {
   if (!root || flags.length === 0) return;
-  const inputs = Array.from(root.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
+  const inputs = Array.from(root.querySelectorAll('input[type="checkbox"]'));
   const n = Math.min(flags.length, inputs.length);
   for (let i = 0; i < n; i++) {
     const on = flags[i] ?? false;
-    inputs[i].checked = on;
-    inputs[i].defaultChecked = on;
-    if (on) inputs[i].setAttribute("checked", "");
-    else inputs[i].removeAttribute("checked");
+    const inp = inputs[i] as HTMLInputElement;
+    inp.checked = on;
+    inp.defaultChecked = on;
+    if (on) inp.setAttribute("checked", "");
+    else inp.removeAttribute("checked");
   }
 }

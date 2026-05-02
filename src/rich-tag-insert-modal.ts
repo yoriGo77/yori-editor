@@ -117,12 +117,13 @@ export class RichTagInsertModal extends Modal {
       this.inputEl.focus();
       this.inputEl.select();
     }, 10);
+  }
 
-    this.setCloseCallback(() => {
-      if (!this.userConfirmedInsert) {
-        this.host.clearTagInsertCaretSnapshot();
-      }
-    });
+  onClose(): void {
+    if (!this.userConfirmedInsert) {
+      this.host.clearTagInsertCaretSnapshot();
+    }
+    this.contentEl.empty();
   }
 
   private renderList(): void {
@@ -199,10 +200,6 @@ export class RichTagInsertModal extends Modal {
       this.host.scheduleRichEditorHydratePasses();
       this.host.clearTagInsertCaretSnapshot();
     });
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
   }
 }
 

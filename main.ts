@@ -1,7 +1,6 @@
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
-  App,
   Editor,
   MarkdownView,
   type MarkdownViewModeType,
@@ -12,7 +11,6 @@ import {
   TFile,
   loadPdfJs,
   normalizePath,
-  parseLinktext,
   setIcon,
   type MarkdownPostProcessorContext
 } from "obsidian";
@@ -21,10 +19,8 @@ import {
 import type { InlineFormatKind, ToolbarAction, ToolbarMode, YoriEditorSettings } from "./src/yori-types";
 import {
   ATTACHMENT_AUDIO_EXTENSIONS,
-  ATTACHMENT_IMAGE_EXTENSIONS,
   ATTACHMENT_PDF_EXTENSIONS,
   ATTACHMENT_RECORDING_EXTENSIONS,
-  ATTACHMENT_VIDEO_EXTENSIONS,
   DEFAULT_SETTINGS,
   FONT_FAMILY_PRESETS,
   FONT_SIZE_PRESETS,
@@ -40,8 +36,7 @@ import {
   YORI_IMG_RESIZE_HOST_CLASS,
   YORI_RICH_ATOMIC_EMBED_CLASS,
   YORI_RICH_BORDERED_CLASS,
-  YORI_RICH_MEDIA_PARAGRAPH_CLASS,
-  YORI_VIDEO_RESIZE_WRAP_CLASS
+  YORI_RICH_MEDIA_PARAGRAPH_CLASS
 } from "./src/yori-constants";
 import { markdownToInitialRichHtml } from "./src/markdown-to-rich-html";
 import { YoriColorPickModal } from "./src/yori-color-modal";
@@ -51,6 +46,7 @@ import {
   RICH_TOOLBAR_ACTIONS
 } from "./src/yori-toolbar-actions";
 import { YoriEditorSettingTab } from "./src/yori-settings-tab";
+import { yoriDetachedEl } from "./src/yori-detached-dom";
 import { registerYoriCommands, type YoriEditorCommandsSelf } from "./src/register-commands";
 import { openVaultLinkPickerModal, type VaultLinkPickerHost } from "./src/open-vault-link-picker";
 import {
@@ -79,7 +75,7 @@ import {
   type YoriCmChromeHost
 } from "./src/rich-boundary-cm-extensions";
 import { isBareHttpUrlPaste, markdownInlineLinkFromBareUrl } from "./src/bare-url-markdown";
-import { escapeHtml, richExternalLinkHtmlFromUrl } from "./src/rich-html-escape";
+import { richExternalLinkHtmlFromUrl } from "./src/rich-html-escape";
 import { getRichEditorInnerHtmlForUndoSnapshot } from "./src/rich-html-undo-snapshot";
 import {
   createNativeMarkdownVaultDropPasteExtension,
@@ -137,7 +133,6 @@ import {
   getDraggedRichTableCellsFromAnchors,
   getRichTableCellsForBulkStyleFromAnchor,
   getSelectedRichTableCells as bulkPickRichTableCellsForTable,
-  sortRichTableCellsDocumentOrder,
   tryGetRichTableCellsFromDragRectangle as bulkPickRichTableCellsFromDragRectangle
 } from "./src/rich-table-bulk-selection";
 import {
@@ -174,6 +169,15 @@ import {
   toolbarFontInheritLabel,
   type YoriUiLang
 } from "./src/yori-locale";
+
+import { openYoriConfirmModal, openYoriImageUrlAltModal } from "./src/yori-prompt-modals";
+import {
+  yoriFillCheckboxBrCell,
+  yoriFillWithSingleBr,
+  yoriReplaceChildrenFromSanitizedHtml
+} from "./src/yori-sanitize-html-dom";
+
+/* eslint-disable @typescript-eslint/no-deprecated -- Rich editor relies on execCommand, queryCommandValue, and caret helpers for contenteditable in Electron. */
 
 export default class YoriEditorPlugin extends Plugin {
   settings: YoriEditorSettings;
@@ -282,8 +286,8 @@ export default class YoriEditorPlugin extends Plugin {
   /** 清除 Chromium / Electron 在 HTML5 drag 后遗留的 grabbing 光标 */
   private resetRichDragCursorUI(clientX?: number, clientY?: number): void {
     const sweep = (): void => {
-      document.documentElement.style.removeProperty("cursor");
-      document.body.style.removeProperty("cursor");
+      activeDocument.documentElement.style.removeProperty("cursor");
+      activeDocument.body.style.removeProperty("cursor");
       this.richEditorEl?.style.removeProperty("cursor");
       this.richEditorWrapEl?.style.removeProperty("cursor");
       try {
@@ -300,7 +304,7 @@ export default class YoriEditorPlugin extends Plugin {
       Number.isFinite(clientY)
     ) {
       try {
-        document.elementFromPoint(clientX, clientY)?.dispatchEvent(
+        activeDocument.elementFromPoint(clientX, clientY)?.dispatchEvent(
           new MouseEvent("mousemove", { bubbles: true, clientX, clientY, view: window })
         );
       } catch {
@@ -383,7 +387,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (this.settings.toolbarMode !== "rich" || !this.richEditorEl) return;
       this.scheduleHydrateRichWikilinksAfterMetadata();
     });
-    this.registerDomEvent(document, "selectionchange", () => {
+    this.registerDomEvent(activeDocument, "selectionchange", () => {
       const sel = window.getSelection();
       if (this.richEditorEl && sel?.anchorNode && this.richEditorEl.contains(sel.anchorNode)) {
         this.syncRichLineSpacingToolbarState();
@@ -395,18 +399,18 @@ export default class YoriEditorPlugin extends Plugin {
     });
     this.registerInterval(window.setInterval(() => this.refreshFontToolbarLabelsIfMounted(), 350));
     this.registerDomEvent(
-      document,
+      activeDocument,
       "pointerdown",
       (evt: PointerEvent) => this.closeRichTableContextMenuIfOutsidePointer(evt),
       { capture: true }
     );
-    this.registerDomEvent(document, "keydown", (evt) => this.handleGlobalKeydown(evt), { capture: true });
+    this.registerDomEvent(activeDocument, "keydown", (evt) => this.handleGlobalKeydown(evt), { capture: true });
     const onNativeMarkedCheckboxCommit = (evt: Event): void => {
       this.handleNativeMarkedTableCheckboxFromEvent(evt);
     };
     /* change/input 在勾选已提交后同步触发；勿用 rAF（切到源码会拆掉预览 DOM，晚点再写会 isConnected 失败或读到旧缓冲）。 */
-    this.registerDomEvent(document, "change", onNativeMarkedCheckboxCommit, { capture: true });
-    this.registerDomEvent(document, "input", onNativeMarkedCheckboxCommit, { capture: true });
+    this.registerDomEvent(activeDocument, "change", onNativeMarkedCheckboxCommit, { capture: true });
+    this.registerDomEvent(activeDocument, "input", onNativeMarkedCheckboxCommit, { capture: true });
     this.registerDomEvent(window, "change", onNativeMarkedCheckboxCommit, { capture: true });
     this.registerDomEvent(window, "input", onNativeMarkedCheckboxCommit, { capture: true });
     this.registerEvent(
@@ -455,9 +459,9 @@ export default class YoriEditorPlugin extends Plugin {
 
     if (this.settings.toolbarMode !== "rich" || !this.richEditorEl) return;
 
-    const ae = document.activeElement;
+    const ae = activeDocument.activeElement;
     const focusInRich =
-      !!ae && (ae === this.richEditorEl || (ae instanceof Node && this.richEditorEl.contains(ae)));
+      !!ae && (ae === this.richEditorEl || (ae.instanceOf(Node) && this.richEditorEl.contains(ae)));
 
     const activeView = this.getActiveMarkdownView();
     if (
@@ -490,7 +494,7 @@ export default class YoriEditorPlugin extends Plugin {
     const caretInTableCell = !!cell && this.richEditorEl.contains(cell) && focusInRich;
 
     if (caretInTableCell && evt.key === "Tab") {
-      const c = cell as HTMLTableCellElement;
+      const c = cell;
       const next = evt.shiftKey ? getAdjacentRichTableCell(c, "prev") : getAdjacentRichTableCell(c, "next");
       if (next) {
         evt.preventDefault();
@@ -525,8 +529,8 @@ export default class YoriEditorPlugin extends Plugin {
       evt.preventDefault();
       evt.stopPropagation();
       evt.stopImmediatePropagation();
-      const range = document.createRange();
-      range.selectNodeContents(cell as HTMLTableCellElement);
+      const range = activeDocument.createRange();
+      range.selectNodeContents(cell);
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
@@ -547,7 +551,7 @@ export default class YoriEditorPlugin extends Plugin {
       evt.preventDefault();
       evt.stopPropagation();
       evt.stopImmediatePropagation();
-      const range = document.createRange();
+      const range = activeDocument.createRange();
       range.selectNodeContents(this.richEditorEl);
       const sel = window.getSelection();
       sel?.removeAllRanges();
@@ -565,7 +569,7 @@ export default class YoriEditorPlugin extends Plugin {
       !evt.metaKey &&
       !evt.altKey
     ) {
-      const table = (cell as HTMLTableCellElement).closest("table") as HTMLTableElement | null;
+      const table = (cell).closest("table");
       if (table && this.richEditorEl.contains(table)) {
         const selected = this.getSelectedRichTableCells(table);
         if (selected.length > 1) {
@@ -574,7 +578,7 @@ export default class YoriEditorPlugin extends Plugin {
           evt.stopImmediatePropagation();
           this.rememberRichStateForUndo();
           for (const c of selected) {
-            c.innerHTML = "<br>";
+            yoriFillWithSingleBr(c);
           }
           this.applyRichTableColumnTypes(table);
           this.markRichDirty();
@@ -662,7 +666,7 @@ export default class YoriEditorPlugin extends Plugin {
       try {
         const prev = this.richUndoHtmlStack.pop()!;
         this.richRedoHtmlStack.push(this.getRichEditorHtmlForUndoSnapshot());
-        this.richEditorEl.innerHTML = prev;
+        yoriReplaceChildrenFromSanitizedHtml(this.richEditorEl, prev);
       } finally {
         this.richSuppressRichUndoCapture = false;
       }
@@ -673,7 +677,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.scheduleRichSelectionVisualSync();
       return;
     }
-    document.execCommand("undo");
+    activeDocument.execCommand("undo");
     this.markRichDirty();
     this.scheduleRichAutoSave();
     this.scheduleRichSelectionVisualSync();
@@ -686,7 +690,7 @@ export default class YoriEditorPlugin extends Plugin {
       try {
         const next = this.richRedoHtmlStack.pop()!;
         this.richUndoHtmlStack.push(this.getRichEditorHtmlForUndoSnapshot());
-        this.richEditorEl.innerHTML = next;
+        yoriReplaceChildrenFromSanitizedHtml(this.richEditorEl, next);
       } finally {
         this.richSuppressRichUndoCapture = false;
       }
@@ -697,7 +701,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.scheduleRichSelectionVisualSync();
       return;
     }
-    document.execCommand("redo");
+    activeDocument.execCommand("redo");
     this.markRichDirty();
     this.scheduleRichAutoSave();
     this.scheduleRichSelectionVisualSync();
@@ -719,7 +723,7 @@ export default class YoriEditorPlugin extends Plugin {
     const view = this.richHostView;
     const leaf = view?.leaf;
     // 不要用 setActiveLeaf(..., { focus: true })，否则会按默认行为聚焦隐藏的 CodeMirror，高级编辑区永远抢不到光标
-    if (leaf && this.app.workspace.activeLeaf !== leaf) {
+    if (leaf && this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf !== leaf) {
       try {
         this.app.workspace.setActiveLeaf(leaf, { focus: false });
       } catch {
@@ -736,9 +740,9 @@ export default class YoriEditorPlugin extends Plugin {
       const sel = window.getSelection();
       if (!sel) return;
       try {
-        const range = document.createRange();
+        const range = activeDocument.createRange();
         if (cell.childNodes.length === 0) {
-          cell.appendChild(document.createElement("br"));
+          cell.appendChild(yoriDetachedEl("br"));
         }
         range.selectNodeContents(cell);
         range.collapse(false);
@@ -751,7 +755,7 @@ export default class YoriEditorPlugin extends Plugin {
           /* ignore */
         }
       }
-      const ae = document.activeElement;
+      const ae = activeDocument.activeElement;
       if (ae instanceof HTMLInputElement && ae.type === "checkbox" && this.richEditorEl.contains(ae)) {
         ae.blur();
         if (view) {
@@ -761,7 +765,7 @@ export default class YoriEditorPlugin extends Plugin {
         const sel2 = window.getSelection();
         if (!sel2) return;
         try {
-          const range = document.createRange();
+          const range = activeDocument.createRange();
           range.selectNodeContents(cell);
           range.collapse(false);
           sel2.removeAllRanges();
@@ -799,7 +803,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.registerMarkdownPostProcessor(
       (el, ctx) => {
         el.querySelectorAll("li.task-list-item").forEach((item) => {
-          const checkbox = item.querySelector("input[type='checkbox']") as HTMLInputElement | null;
+          const checkbox = item.querySelector("input[type='checkbox']") as unknown as HTMLInputElement | null;
           if (!checkbox) return;
           const textEl = item.querySelector(".task-list-item-checkbox")?.nextSibling;
           if (checkbox.checked && textEl instanceof HTMLElement) {
@@ -946,9 +950,12 @@ export default class YoriEditorPlugin extends Plugin {
         btn.addEventListener("mousedown", (evt) => {
           evt.preventDefault();
         });
-        btn.addEventListener("click", () =>
-          this.executeObsidianCommandById(`${this.manifest.id}:${action.command}`)
-        );
+        btn.addEventListener("click", () => {
+          void (async () => {
+            if (isRichMode && (await this.tryDispatchRichToolbarCommand(action.command))) return;
+            this.executeObsidianCommandById(`${this.manifest.id}:${action.command}`);
+          })();
+        });
       });
     });
 
@@ -1179,7 +1186,7 @@ export default class YoriEditorPlugin extends Plugin {
     const text = evt.clipboardData?.getData("text/plain") ?? "";
     if (!isBareHttpUrlPaste(text)) return;
     evt.preventDefault();
-    this.runRichInsertHtml(richExternalLinkHtmlFromUrl(text));
+    void this.runRichInsertHtml(richExternalLinkHtmlFromUrl(text));
   }
 
   /** 树序收集 Live Preview 内任务列表复选框（ul.contains-task-list + li.task-list-item），含 Shadow。 */
@@ -1187,11 +1194,11 @@ export default class YoriEditorPlugin extends Plugin {
     const acc: HTMLInputElement[] = [];
     const visit = (root: ParentNode): void => {
       for (const inp of Array.from(root.querySelectorAll("input[type='checkbox'],input[type=\"checkbox\"]"))) {
-        if (!(inp instanceof HTMLInputElement) || inp.type !== "checkbox") continue;
+        if (!(inp.instanceOf(HTMLInputElement)) || inp.type !== "checkbox") continue;
         if (this.isNativePreviewTaskListCheckbox(inp)) acc.push(inp);
       }
       root.querySelectorAll("*").forEach((el) => {
-        if (el instanceof Element && el.shadowRoot) visit(el.shadowRoot);
+        if (el.instanceOf(Element) && el.shadowRoot) visit(el.shadowRoot);
       });
     };
     visit(container);
@@ -1202,7 +1209,7 @@ export default class YoriEditorPlugin extends Plugin {
   private collectTaskListCheckboxInputsFromParsedInnerRoot(root: ParentNode): HTMLInputElement[] {
     const acc: HTMLInputElement[] = [];
     for (const inp of Array.from(root.querySelectorAll("input[type='checkbox'],input[type=\"checkbox\"]"))) {
-      if (!(inp instanceof HTMLInputElement) || inp.type !== "checkbox") continue;
+      if (!(inp.instanceOf(HTMLInputElement)) || inp.type !== "checkbox") continue;
       const li = inp.closest("li");
       if (!li?.classList.contains("task-list-item")) continue;
       const ul = li.parentElement;
@@ -1282,14 +1289,14 @@ export default class YoriEditorPlugin extends Plugin {
     while (cur && seen.size < 48) {
       if (seen.has(cur)) break;
       seen.add(cur);
-      if (cur instanceof HTMLTableCellElement) return cur;
+      if (cur.instanceOf(HTMLTableCellElement)) return cur;
       const parentNode: Node | null = cur.parentNode;
       if (parentNode) {
         cur = parentNode;
         continue;
       }
       const r = cur.getRootNode();
-      if (r instanceof ShadowRoot) {
+      if (r.instanceOf(ShadowRoot)) {
         cur = r.host;
         continue;
       }
@@ -1358,7 +1365,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (this.richEditorEl && containerContainsNodeShadowAware(this.richEditorEl, table)) return;
 
     const model = buildRichTableGrid(table);
-    const pos = model.origins.get(cell as HTMLTableCellElement);
+    const pos = model.origins.get(cell);
     if (!pos) return;
     if (pos.row < 1) return;
 
@@ -1409,13 +1416,13 @@ export default class YoriEditorPlugin extends Plugin {
     if (this.nativePreviewCheckboxWriteLock) return false;
     this.nativePreviewCheckboxWriteLock = true;
     try {
-      const checkbox = srcCell.querySelector("input[type='checkbox']") as HTMLInputElement | null;
+      const checkbox = srcCell.querySelector("input[type='checkbox']") as unknown as HTMLInputElement | null;
       if (checkbox) {
         checkbox.checked = checked;
         if (checked) checkbox.setAttribute("checked", "");
         else checkbox.removeAttribute("checked");
       } else {
-        srcCell.innerHTML = `<input type='checkbox' ${checked ? "checked " : ""}/><br>`;
+        yoriFillCheckboxBrCell(srcCell, checked);
       }
 
       const nextInner = root.innerHTML;
@@ -1608,7 +1615,7 @@ export default class YoriEditorPlugin extends Plugin {
     mainBtn.addEventListener("mousedown", (evt) => evt.preventDefault());
     mainBtn.addEventListener("click", () => {
       if (richMode) {
-        this.applyRichHighlightColor(this.settings.lastHighlightColor);
+        void this.applyRichHighlightColor(this.settings.lastHighlightColor);
       } else {
         const editor = this.getActiveEditor();
         if (!editor) return;
@@ -1622,7 +1629,7 @@ export default class YoriEditorPlugin extends Plugin {
       const nextOpen = !panel.hasClass("is-open");
       if (richMode && nextOpen) {
         this.fillRichToolbarColorPanel(panel, this.getRichToolbarSelectionColor("hilite"), {
-          onPick: (hex) => this.applyRichHighlightColor(hex),
+          onPick: (hex) => void this.applyRichHighlightColor(hex),
           onClear: () => this.clearRichHighlight(),
           onCustom: () => {
             void this.applyRichHighlightColorCustom();
@@ -1633,7 +1640,7 @@ export default class YoriEditorPlugin extends Plugin {
       panel.toggleClass("is-open", nextOpen);
     });
 
-    document.addEventListener(
+    activeDocument.addEventListener(
       "click",
       (evt) => {
         if (!wrap.contains(evt.target as Node)) {
@@ -1705,7 +1712,7 @@ export default class YoriEditorPlugin extends Plugin {
     mainBtn.addEventListener("mousedown", (evt) => evt.preventDefault());
     mainBtn.addEventListener("click", () => {
       if (richMode) {
-        this.applyRichTextColor(this.settings.lastTextColor);
+        void this.applyRichTextColor(this.settings.lastTextColor);
       } else {
         const editor = this.getActiveEditor();
         if (!editor) return;
@@ -1719,7 +1726,7 @@ export default class YoriEditorPlugin extends Plugin {
       const nextOpen = !panel.hasClass("is-open");
       if (richMode && nextOpen) {
         this.fillRichToolbarColorPanel(panel, this.getRichToolbarSelectionColor("fore"), {
-          onPick: (hex) => this.applyRichTextColor(hex),
+          onPick: (hex) => void this.applyRichTextColor(hex),
           onClear: () => this.clearRichTextColor(),
           onCustom: () => {
             void this.applyRichTextColorCustom();
@@ -1730,7 +1737,7 @@ export default class YoriEditorPlugin extends Plugin {
       panel.toggleClass("is-open", nextOpen);
     });
 
-    document.addEventListener(
+    activeDocument.addEventListener(
       "click",
       (evt) => {
         if (!wrap.contains(evt.target as Node)) {
@@ -1803,7 +1810,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (next) this.refreshFontPresetPanelActiveStates();
     });
 
-    document.addEventListener(
+    activeDocument.addEventListener(
       "click",
       (evt) => {
         if (!wrap.contains(evt.target as Node)) {
@@ -1891,7 +1898,7 @@ export default class YoriEditorPlugin extends Plugin {
   private richNodeIndicatesFormat(node: Node | null, kind: InlineFormatKind): boolean {
     if (!node || !this.richEditorEl) return false;
     let el: HTMLElement | null = node.nodeType === Node.TEXT_NODE ? node.parentElement : null;
-    if (!el && node instanceof HTMLElement) el = node;
+    if (!el && node.instanceOf(HTMLElement)) el = node;
     if (!el) return false;
     while (el && this.richEditorEl.contains(el)) {
       const tag = el.tagName;
@@ -2179,7 +2186,7 @@ export default class YoriEditorPlugin extends Plugin {
       const sf = cur.style?.fontFamily?.trim();
       if (sf) return sf;
       if (cur.tagName === "FONT") {
-        const face = (cur as HTMLFontElement).face?.trim();
+        const face = cur.getAttr("face")?.trim();
         if (face) return face;
       }
       cur = cur.parentElement;
@@ -2202,9 +2209,9 @@ export default class YoriEditorPlugin extends Plugin {
     const s = css.trim();
     let i = 0;
     while (i < s.length) {
-      while (i < s.length && /\s/.test(s[i]!)) i++;
+      while (i < s.length && /\s/.test(s[i])) i++;
       if (i >= s.length) break;
-      const ch = s[i]!;
+      const ch = s[i];
       if (ch === '"' || ch === "'") {
         i++;
         const start = i;
@@ -2219,7 +2226,7 @@ export default class YoriEditorPlugin extends Plugin {
         while (i < s.length && s[i] !== ",") i++;
         out.push(s.slice(start, i).trim());
       }
-      while (i < s.length && (s[i] === "," || /\s/.test(s[i]!))) i++;
+      while (i < s.length && (s[i] === "," || /\s/.test(s[i]))) i++;
     }
     return out;
   }
@@ -2229,7 +2236,7 @@ export default class YoriEditorPlugin extends Plugin {
     const t = name.trim();
     if (!t) return true;
     if (t === "?" || t === "？" || t === "??") return true;
-    if (/^[\?\uFF1F\uFFFD・·]+$/u.test(t)) return true;
+    if (/^[?\uFF1F\uFFFD・·]+$/u.test(t)) return true;
     return false;
   }
 
@@ -2373,7 +2380,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (next) this.refreshRichLineSpacingPanelIfOpen();
     });
 
-    document.addEventListener(
+    activeDocument.addEventListener(
       "click",
       (evt) => {
         if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
@@ -2444,7 +2451,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (nextOpen) this.refreshRichBorderPanelIfOpen();
     });
 
-    document.addEventListener(
+    activeDocument.addEventListener(
       "click",
       (evt) => {
         if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
@@ -2461,9 +2468,9 @@ export default class YoriEditorPlugin extends Plugin {
     });
     setIcon(btn, "table");
     btn.addEventListener("mousedown", (evt) => evt.preventDefault());
-    btn.addEventListener("click", () =>
-      this.runRichInsertHtml(richInsertTableTemplateHtml(lang))
-    );
+    btn.addEventListener("click", () => {
+      void this.runRichInsertHtml(richInsertTableTemplateHtml(lang));
+    });
   }
 
   /** 表格多格 / execCommand 在 td 内不稳定：直接写单元格 text-align（与批量文字色一致） */
@@ -2513,12 +2520,12 @@ export default class YoriEditorPlugin extends Plugin {
     for (const cell of cells) {
       for (const el of targetsForCell(cell)) {
         if (command === "bold") {
-          if (turnOn) el.style.fontWeight = "700";
+          if (turnOn) el.setCssProps({ "font-weight": "700" });
           else el.style.removeProperty("font-weight");
           continue;
         }
         if (command === "italic") {
-          if (turnOn) el.style.fontStyle = "italic";
+          if (turnOn) el.setCssProps({ "font-style": "italic" });
           else el.style.removeProperty("font-style");
           continue;
         }
@@ -2539,11 +2546,12 @@ export default class YoriEditorPlugin extends Plugin {
     }
   }
 
-  private runRichCommand(command: string, value?: string): void {
+  private async runRichCommand(command: string, value?: string): Promise<void> {
     if (!this.richEditorEl) {
       new Notice("请先进入高级编辑模式。");
       return;
     }
+    await this.restoreRichEditingSurfaceForMutation();
     const alignByCmd: Record<string, "left" | "center" | "right"> = {
       justifyLeft: "left",
       justifyCenter: "center",
@@ -2586,11 +2594,11 @@ export default class YoriEditorPlugin extends Plugin {
         if (sel) {
           for (const cell of cells) {
             try {
-              const range = document.createRange();
+              const range = activeDocument.createRange();
               range.selectNodeContents(cell);
               sel.removeAllRanges();
               sel.addRange(range);
-              document.execCommand(command, false, value);
+              activeDocument.execCommand(command, false, value);
             } catch {
               /* ignore */
             }
@@ -2638,9 +2646,47 @@ export default class YoriEditorPlugin extends Plugin {
     }
     this.rememberRichStateForUndo();
     this.richEditorEl.focus();
-    document.execCommand(command, false, value);
+    activeDocument.execCommand(command, false, value);
     this.markRichDirty();
     this.scheduleRichAutoSave();
+  }
+
+  /**
+   * 工具栏按钮不走 `executeCommandById`：在部分环境（焦点在 contenteditable、CM 被隐藏等）
+   * 插件命令可能静默失败，导致列表/粗斜体等「全部失效」。此处与 register-commands 保持一致直连实现。
+   */
+  private async tryDispatchRichToolbarCommand(command: string): Promise<boolean> {
+    switch (command) {
+      case "rich-bold":
+        await this.runRichCommand("bold");
+        return true;
+      case "rich-italic":
+        await this.runRichCommand("italic");
+        return true;
+      case "rich-underline":
+        await this.runRichCommand("underline");
+        return true;
+      case "rich-strike":
+        await this.runRichCommand("strikeThrough");
+        return true;
+      case "rich-bullet-list":
+        await this.runRichCommand("insertUnorderedList");
+        return true;
+      case "rich-numbered-list":
+        await this.runRichCommand("insertOrderedList");
+        return true;
+      case "rich-task-list":
+        await this.runRichCommand("insertTaskList");
+        return true;
+      case "rich-divider":
+        await this.runRichInsertHtml("<hr />");
+        return true;
+      case "insert-attachment":
+        this.pickLocalFilesForAttachment();
+        return true;
+      default:
+        return false;
+    }
   }
 
   /** 任务列表插入/切换后的统一收尾：p 内嵌列表 unwrap、Obsidian class、Grid 下行内正文包裹 */
@@ -2685,7 +2731,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (this.richWrapParagraphMultiBrRunsAsTaskList(sel0)) return;
       if (this.richTryWrapParagraphBlockAsSingleTaskList(sel0)) return;
     }
-    document.execCommand("insertUnorderedList", false);
+    activeDocument.execCommand("insertUnorderedList", false);
     this.richAddCheckboxToListFromSelection();
   }
 
@@ -2704,7 +2750,7 @@ export default class YoriEditorPlugin extends Plugin {
         existing.classList.add("task-list-item-checkbox");
         continue;
       }
-      const cb = document.createElement("input");
+      const cb = yoriDetachedEl("input");
       cb.type = "checkbox";
       cb.className = "task-list-item-checkbox";
       li.insertBefore(cb, li.firstChild);
@@ -2729,7 +2775,7 @@ export default class YoriEditorPlugin extends Plugin {
     let cur: Node | null = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
     while (cur && cur !== this.richEditorEl) {
       const parentNode: Node | null = cur.parentNode;
-      if (parentNode === this.richEditorEl && cur instanceof HTMLElement) {
+      if (parentNode === this.richEditorEl && cur.instanceOf(HTMLElement)) {
         return cur;
       }
       cur = parentNode;
@@ -2771,7 +2817,7 @@ export default class YoriEditorPlugin extends Plugin {
       const b = siblings[mid];
       const c = siblings[mid + 1];
       if (
-        !(a instanceof HTMLParagraphElement && b instanceof HTMLParagraphElement && c instanceof HTMLParagraphElement)
+        !(a.instanceOf(HTMLParagraphElement) && b.instanceOf(HTMLParagraphElement) && c.instanceOf(HTMLParagraphElement))
       ) {
         return null;
       }
@@ -2809,8 +2855,8 @@ export default class YoriEditorPlugin extends Plugin {
     if (
       !startBlock ||
       !endBlock ||
-      !(startBlock instanceof HTMLParagraphElement) ||
-      !(endBlock instanceof HTMLParagraphElement)
+      !(startBlock.instanceOf(HTMLParagraphElement)) ||
+      !(endBlock.instanceOf(HTMLParagraphElement))
     ) {
       return null;
     }
@@ -2826,7 +2872,7 @@ export default class YoriEditorPlugin extends Plugin {
     const out: HTMLParagraphElement[] = [];
     for (let i = lo; i <= hi; i++) {
       const el = kids[i];
-      if (!(el instanceof HTMLParagraphElement)) return null;
+      if (!(el.instanceOf(HTMLParagraphElement))) return null;
       if (el.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) return null;
       if (el.querySelector("table, ul, ol")) return null;
       out.push(el);
@@ -2838,24 +2884,24 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl || sel.rangeCount === 0 || sel.isCollapsed) return false;
     const pars = this.collectRichTopLevelParagraphBlocksForTaskListRange(sel.getRangeAt(0));
     if (!pars?.length) return false;
-    const ul = document.createElement("ul");
+    const ul = yoriDetachedEl("ul");
     ul.classList.add("contains-task-list");
     const ref = pars[0];
     ref.parentNode?.insertBefore(ul, ref);
     for (const p of pars) {
-      const li = document.createElement("li");
+      const li = yoriDetachedEl("li");
       li.classList.add("task-list-item");
-      const cb = document.createElement("input");
+      const cb = yoriDetachedEl("input");
       cb.type = "checkbox";
       cb.className = "task-list-item-checkbox";
       li.appendChild(cb);
       while (p.firstChild) li.appendChild(p.firstChild);
-      if (li.childNodes.length <= 1) li.appendChild(document.createElement("br"));
+      if (li.childNodes.length <= 1) li.appendChild(yoriDetachedEl("br"));
       ul.appendChild(li);
       p.remove();
     }
     sel.removeAllRanges();
-    const nr = document.createRange();
+    const nr = activeDocument.createRange();
     const firstCb = ul.querySelector("input.task-list-item-checkbox");
     if (firstCb) {
       nr.setStartAfter(firstCb);
@@ -2883,7 +2929,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private selectionIntersectsMultipleTopLevelBrRuns(
-    p: HTMLParagraphElement,
+    _p: HTMLParagraphElement,
     range: Range,
     runs: Node[][]
   ): boolean {
@@ -2905,7 +2951,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   private rangeCoversParagraphContents(range: Range, p: HTMLParagraphElement): boolean {
     try {
-      const inner = document.createRange();
+      const inner = activeDocument.createRange();
       inner.selectNodeContents(p);
       return (
         range.compareBoundaryPoints(Range.START_TO_START, inner) <= 0 &&
@@ -2921,7 +2967,7 @@ export default class YoriEditorPlugin extends Plugin {
     const range = sel.getRangeAt(0);
     const startBlock = this.getRichTopLevelBlockElement(range.startContainer);
     const endBlock = this.getRichTopLevelBlockElement(range.endContainer);
-    if (!startBlock || startBlock !== endBlock || !(startBlock instanceof HTMLParagraphElement)) {
+    if (!startBlock || startBlock !== endBlock || !(startBlock.instanceOf(HTMLParagraphElement))) {
       return false;
     }
     const p = startBlock;
@@ -2938,32 +2984,32 @@ export default class YoriEditorPlugin extends Plugin {
       this.rangeCoversParagraphContents(range, p);
     if (!shouldSplit) return false;
 
-    const ul = document.createElement("ul");
+    const ul = yoriDetachedEl("ul");
     ul.classList.add("contains-task-list");
     p.parentNode?.insertBefore(ul, p);
 
     for (const run of runs) {
-      const li = document.createElement("li");
+      const li = yoriDetachedEl("li");
       li.classList.add("task-list-item");
-      const cb = document.createElement("input");
+      const cb = yoriDetachedEl("input");
       cb.type = "checkbox";
       cb.className = "task-list-item-checkbox";
       li.appendChild(cb);
       if (run.length === 0) {
-        li.appendChild(document.createElement("br"));
+        li.appendChild(yoriDetachedEl("br"));
       } else {
         for (const n of run) li.appendChild(n);
       }
       const afterCb = Array.from(li.childNodes).filter(
-        (n) => !(n instanceof HTMLInputElement && n.type === "checkbox")
+        (n) => !(n.instanceOf(HTMLInputElement) && n.type === "checkbox")
       );
-      if (afterCb.length === 0) li.appendChild(document.createElement("br"));
+      if (afterCb.length === 0) li.appendChild(yoriDetachedEl("br"));
       ul.appendChild(li);
     }
     p.remove();
 
     sel.removeAllRanges();
-    const nr = document.createRange();
+    const nr = activeDocument.createRange();
     const firstCb = ul.querySelector("input.task-list-item-checkbox");
     if (firstCb) {
       nr.setStartAfter(firstCb);
@@ -2989,16 +3035,16 @@ export default class YoriEditorPlugin extends Plugin {
     const anchor = sel.anchorNode;
     if (anchor && !this.richEditorEl.contains(anchor)) return false;
     let block = this.getRichTopLevelBlockElement(anchor);
-    if (!block || !(block instanceof HTMLParagraphElement)) return false;
+    if (!block || !(block.instanceOf(HTMLParagraphElement))) return false;
     block = this.richMergeClassicFontSplitTripleContaining(block);
     if (block.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) return false;
     if (block.closest("td, th")) return false;
 
-    const ul = document.createElement("ul");
+    const ul = yoriDetachedEl("ul");
     ul.classList.add("contains-task-list");
-    const li = document.createElement("li");
+    const li = yoriDetachedEl("li");
     li.classList.add("task-list-item");
-    const cb = document.createElement("input");
+    const cb = yoriDetachedEl("input");
     cb.type = "checkbox";
     cb.className = "task-list-item-checkbox";
     li.appendChild(cb);
@@ -3007,14 +3053,14 @@ export default class YoriEditorPlugin extends Plugin {
       li.appendChild(block.firstChild);
     }
     if (li.childNodes.length <= 1) {
-      li.appendChild(document.createElement("br"));
+      li.appendChild(yoriDetachedEl("br"));
     }
     ul.appendChild(li);
     block.parentNode?.insertBefore(ul, block);
     block.remove();
 
     sel.removeAllRanges();
-    const nr = document.createRange();
+    const nr = activeDocument.createRange();
     nr.setStartAfter(cb);
     nr.collapse(true);
     sel.addRange(nr);
@@ -3028,7 +3074,7 @@ export default class YoriEditorPlugin extends Plugin {
   private flattenRichNestedListInsideTableTaskListItems(root: HTMLElement): void {
     const selector = "td ul.contains-task-list > li.task-list-item, th ul.contains-task-list > li.task-list-item";
     for (const li of Array.from(root.querySelectorAll(selector))) {
-      if (!(li instanceof HTMLLIElement)) continue;
+      if (!(li.instanceOf(HTMLLIElement))) continue;
       if (!root.contains(li)) continue;
       const nestedLists = Array.from(li.children).filter(
         (c) => c.tagName === "UL" || c.tagName === "OL"
@@ -3037,9 +3083,9 @@ export default class YoriEditorPlugin extends Plugin {
         const innerLis = Array.from(nested.querySelectorAll(":scope > li"));
         if (innerLis.length !== 1) continue;
         const innerLi = innerLis[0];
-        if (!(innerLi instanceof HTMLLIElement)) continue;
+        if (!(innerLi.instanceOf(HTMLLIElement))) continue;
         for (const ch of Array.from(innerLi.childNodes)) {
-          if (ch instanceof HTMLInputElement && ch.type === "checkbox") continue;
+          if (ch.instanceOf(HTMLInputElement) && ch.type === "checkbox") continue;
           li.insertBefore(ch, nested);
         }
         nested.remove();
@@ -3049,12 +3095,12 @@ export default class YoriEditorPlugin extends Plugin {
 
   /** 任务列表项去掉复选框后收成段落（保留内联与 .yori-rich-task-li-body 等）。 */
   private richTaskListItemToParagraph(li: HTMLLIElement): HTMLParagraphElement {
-    const p = document.createElement("p");
+    const p = yoriDetachedEl("p");
     for (const ch of Array.from(li.childNodes)) {
-      if (ch instanceof HTMLInputElement && ch.type === "checkbox") continue;
+      if (ch.instanceOf(HTMLInputElement) && ch.type === "checkbox") continue;
       p.appendChild(ch);
     }
-    if (p.childNodes.length === 0) p.appendChild(document.createElement("br"));
+    if (p.childNodes.length === 0) p.appendChild(yoriDetachedEl("br"));
     return p;
   }
 
@@ -3128,7 +3174,7 @@ export default class YoriEditorPlugin extends Plugin {
     const parentOfUl = ul0.parentNode;
     if (!parentOfUl) return false;
 
-    const frag = document.createDocumentFragment();
+    const frag = createFragment();
     for (const seg of segments) {
       if (seg.kind === "ps") {
         for (const li of seg.lis) {
@@ -3136,7 +3182,7 @@ export default class YoriEditorPlugin extends Plugin {
           li.remove();
         }
       } else {
-        const nu = document.createElement("ul");
+        const nu = yoriDetachedEl("ul");
         nu.classList.add("contains-task-list");
         for (const li of seg.lis) nu.appendChild(li);
         frag.appendChild(nu);
@@ -3148,7 +3194,7 @@ export default class YoriEditorPlugin extends Plugin {
     ul0.remove();
 
     sel.removeAllRanges();
-    const r = document.createRange();
+    const r = activeDocument.createRange();
     if (firstInserted instanceof HTMLParagraphElement) {
       r.selectNodeContents(firstInserted);
       r.collapse(true);
@@ -3173,20 +3219,99 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     this.richEditorEl.focus();
     try {
-      document.execCommand("styleWithCSS", false, "true");
+      activeDocument.execCommand("styleWithCSS", false, "true");
     } catch {
       /* ignore */
     }
   }
 
-  private runRichInsertHtml(html: string): void {
+  /**
+   * 阅读/预览模式下 `.yori-rich-editor-wrap` 会被设为不可见，浏览器往往不会对其中 contenteditable 执行 execCommand，
+   * 表现为列表/粗斜体/色盘等「全部失效」。必要时强制回到源码视图并恢复外壳显示。
+   */
+  private async ensureRichEditingUiReady(): Promise<void> {
+    if (this.settings.toolbarMode !== "rich" || !this.richEditorEl || !this.richEditorWrapEl) return;
+    const view = this.richHostView;
+    if (!view) return;
+    try {
+      if (this.app.workspace.getActiveViewOfType(MarkdownView) !== view) {
+        this.app.workspace.setActiveLeaf(view.leaf, { focus: true });
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (view.leaf.isDeferred) {
+        await view.leaf.loadIfDeferred();
+      }
+      if (view.getMode() === "preview") {
+        const leaf = view.leaf;
+        const vs = leaf.getViewState();
+        const prev = vs.state ?? {};
+        await leaf.setViewState({
+          ...vs,
+          state: { ...prev, mode: "source" },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    this.syncRichMarkdownSubviewVisibility(view);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }
+
+  private snapshotRichSelectionForToolbar(): Range[] | null {
+    const ed = this.richEditorEl;
+    if (!ed) return null;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const ranges: Range[] = [];
+    for (let i = 0; i < sel.rangeCount; i++) {
+      const r = sel.getRangeAt(i);
+      try {
+        if (ed.contains(r.commonAncestorContainer)) ranges.push(r.cloneRange());
+      } catch {
+        /* ignore */
+      }
+    }
+    return ranges.length ? ranges : null;
+  }
+
+  private restoreRichSelectionRanges(ranges: Range[] | null): void {
+    const ed = this.richEditorEl;
+    if (!ed || !ranges?.length) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    try {
+      sel.removeAllRanges();
+      for (const r of ranges) {
+        if (ed.contains(r.commonAncestorContainer)) sel.addRange(r);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 工具栏/命令触发的变异前先确保编辑区可见并尽量恢复选区。 */
+  private async restoreRichEditingSurfaceForMutation(): Promise<void> {
+    const snap = this.snapshotRichSelectionForToolbar();
+    await this.ensureRichEditingUiReady();
+    if (this.richHostView) {
+      blurMarkdownSourceEditor(this.richHostView);
+    }
+    this.richEditorEl?.focus({ preventScroll: true });
+    this.restoreRichSelectionRanges(snap);
+  }
+
+  private async runRichInsertHtml(html: string): Promise<void> {
     if (!this.richEditorEl) {
       new Notice("请先进入高级编辑模式。");
       return;
     }
+    await this.restoreRichEditingSurfaceForMutation();
     this.rememberRichStateForUndo();
     this.richEditorEl.focus();
-    document.execCommand("insertHTML", false, html);
+    activeDocument.execCommand("insertHTML", false, html);
     if (html.includes("<table")) {
       this.normalizeAllRichTables();
     }
@@ -3202,11 +3327,11 @@ export default class YoriEditorPlugin extends Plugin {
     if (!sel || sel.rangeCount === 0) return;
     const node = sel.anchorNode;
     if (!node) return;
-    const el = node instanceof Element ? node : node.parentElement;
+    const el = node.instanceOf(Element) ? node : node.parentElement;
     const a = el?.closest?.("a") as HTMLAnchorElement | null;
     if (!a || !this.richEditorEl.contains(a)) return;
     if (a.classList.contains("internal-link")) return;
-    const range = document.createRange();
+    const range = activeDocument.createRange();
     range.setStartAfter(a);
     range.collapse(true);
     sel.removeAllRanges();
@@ -3224,7 +3349,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
     const r = sel.getRangeAt(0);
     if (!this.richEditorEl.contains(r.commonAncestorContainer)) return false;
-    const full = document.createRange();
+    const full = activeDocument.createRange();
     full.selectNodeContents(this.richEditorEl);
     return (
       r.compareBoundaryPoints(Range.START_TO_START, full) <= 0 &&
@@ -3235,7 +3360,7 @@ export default class YoriEditorPlugin extends Plugin {
   private clearRichEditorAllContent(): void {
     if (!this.richEditorEl) return;
     this.rememberRichStateForUndo();
-    this.richEditorEl.innerHTML = "<p><br></p>";
+    yoriReplaceChildrenFromSanitizedHtml(this.richEditorEl, "<p><br></p>");
     this.markRichDirty();
     this.scheduleRichAutoSave();
     this.scheduleRichSelectionVisualSync();
@@ -3262,7 +3387,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!ed || rawInner == null || rawInner === "") return;
     let target: HTMLAnchorElement | null = null;
     for (const a of Array.from(ed.querySelectorAll("a.internal-link[data-yori-wikilink]"))) {
-      if (!(a instanceof HTMLAnchorElement)) continue;
+      if (!(a.instanceOf(HTMLAnchorElement))) continue;
       if ((a.getAttribute("data-yori-wikilink") ?? "").trim() === rawInner) {
         target = a;
       }
@@ -3271,7 +3396,7 @@ export default class YoriEditorPlugin extends Plugin {
     try {
       const sel = window.getSelection();
       if (!sel) return;
-      const r = document.createRange();
+      const r = activeDocument.createRange();
       r.setStartAfter(target);
       r.collapse(true);
       sel.removeAllRanges();
@@ -3330,7 +3455,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.rememberRichStateForUndo();
     }
     ed.focus();
-    const inserted = document.execCommand("insertText", false, text);
+    const inserted = activeDocument.execCommand("insertText", false, text);
     if (!inserted) {
       const sel = window.getSelection();
       if (sel?.rangeCount) {
@@ -3338,7 +3463,7 @@ export default class YoriEditorPlugin extends Plugin {
         if (ed.contains(r.commonAncestorContainer)) {
           try {
             r.deleteContents();
-            const tn = document.createTextNode(text);
+            const tn = activeDocument.createTextNode(text);
             r.insertNode(tn);
             r.setStartAfter(tn);
             r.collapse(true);
@@ -3449,11 +3574,11 @@ export default class YoriEditorPlugin extends Plugin {
 
   private ensureAttachmentFileInput(): HTMLInputElement {
     if (this.attachmentFileInputEl?.isConnected) return this.attachmentFileInputEl;
-    const input = document.createElement("input");
+    const input = yoriDetachedEl("input");
     input.type = "file";
     input.multiple = true;
     input.style.cssText = "position:fixed;left:-9999px;opacity:0;pointer-events:none;width:0;height:0;";
-    document.body.appendChild(input);
+    activeDocument.body.appendChild(input);
     this.attachmentFileInputEl = input;
     return input;
   }
@@ -3534,7 +3659,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl || this.settings.toolbarMode !== "rich") return;
     const t = evt.target;
     if (!(t instanceof Node) || !this.richEditorEl.contains(t)) return;
-    const el = t instanceof Element ? t : t.parentElement;
+    const el = t.instanceOf(Element) ? t : t.parentElement;
     if (el?.closest(".yori-rich-img-resize-handle")) {
       evt.preventDefault();
       return;
@@ -4057,16 +4182,17 @@ export default class YoriEditorPlugin extends Plugin {
     });
   }
 
-  private applyRichTextColor(color: string): void {
+  private async applyRichTextColor(color: string): Promise<void> {
     if (!this.richEditorEl) {
       new Notice("请先进入高级编辑模式。");
       return;
     }
+    await this.restoreRichEditingSurfaceForMutation();
     const tableCells = this.getRichTableCellsForBulkTextStyle();
     if (tableCells.length <= 1) {
       this.rememberRichStateForUndo();
       this.prepareRichEditorForExecStyleCommands();
-      document.execCommand("foreColor", false, color);
+      activeDocument.execCommand("foreColor", false, color);
       this.markRichDirty();
       this.scheduleRichAutoSave();
       this.rememberLastTextColor(color);
@@ -4155,7 +4281,7 @@ export default class YoriEditorPlugin extends Plugin {
     const endP = this.getRichParagraphHostForInlineSurround(range.endContainer);
     if (!startP || startP !== endP) return false;
     try {
-      const span = document.createElement("span");
+      const span = yoriDetachedEl("span");
       range.surroundContents(span);
       this.stripRichFontPropertyOnElementTree(span, property);
       if (property === "fontFamily") span.style.fontFamily = cssVal;
@@ -4167,7 +4293,7 @@ export default class YoriEditorPlugin extends Plugin {
         else span.removeAttribute("style");
       }
       sel.removeAllRanges();
-      const nr = document.createRange();
+      const nr = activeDocument.createRange();
       nr.selectNodeContents(span);
       sel.addRange(nr);
       return true;
@@ -4189,7 +4315,7 @@ export default class YoriEditorPlugin extends Plugin {
       return;
     }
 
-    const holder = document.createElement("div");
+    const holder = yoriDetachedEl("div");
     holder.appendChild(range.extractContents());
 
     const topBlocks = Array.from(holder.children).filter(
@@ -4218,20 +4344,20 @@ export default class YoriEditorPlugin extends Plugin {
         }
         range.insertNode(reuse);
         sel.removeAllRanges();
-        const nr = document.createRange();
+        const nr = activeDocument.createRange();
         nr.selectNodeContents(reuse);
         sel.addRange(nr);
         cleanupRichFontSpanSoupInTree(this.richEditorEl);
         return;
       }
 
-      const span = document.createElement("span");
+      const span = yoriDetachedEl("span");
       if (property === "fontFamily") span.style.fontFamily = cssVal;
       else span.style.fontSize = cssVal;
       while (holder.firstChild) span.appendChild(holder.firstChild);
       range.insertNode(span);
       sel.removeAllRanges();
-      const nr = document.createRange();
+      const nr = activeDocument.createRange();
       nr.selectNodeContents(span);
       sel.addRange(nr);
       cleanupRichFontSpanSoupInTree(this.richEditorEl);
@@ -4245,12 +4371,12 @@ export default class YoriEditorPlugin extends Plugin {
       else block.style.fontSize = cssVal;
       insertedBlocks.push(block);
     }
-    const frag = document.createDocumentFragment();
+    const frag = createFragment();
     while (holder.firstChild) frag.appendChild(holder.firstChild);
     range.insertNode(frag);
 
     sel.removeAllRanges();
-    const nr = document.createRange();
+    const nr = activeDocument.createRange();
     const first = insertedBlocks[0];
     const last = insertedBlocks[insertedBlocks.length - 1];
     if (first?.isConnected && last?.isConnected) {
@@ -4284,24 +4410,28 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    const tableCells = this.getRichTableCellsForBulkTextStyle();
-    const cssVal = value.trim() ? value.trim() : "inherit";
-    if (tableCells.length <= 1 && !this.richSelectionIsNonEmptyInEditor()) {
-      new Notice("请先选中文本。");
-      return;
-    }
-    this.rememberRichStateForUndo();
-    if (tableCells.length > 1) {
-      this.applyRichFontToCellsDom(tableCells, "font-family", value);
-      this.restoreCaretToEndOfFirstTableCell(tableCells);
-      this.richEditorEl.focus();
-    } else {
-      this.applyRichSpanStyleAroundSelection("fontFamily", cssVal);
-      this.richEditorEl.focus();
-    }
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.rememberLastFontFamily(value);
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      const tableCells = this.getRichTableCellsForBulkTextStyle();
+      const cssVal = value.trim() ? value.trim() : "inherit";
+      if (tableCells.length <= 1 && !this.richSelectionIsNonEmptyInEditor()) {
+        new Notice("请先选中文本。");
+        return;
+      }
+      this.rememberRichStateForUndo();
+      if (tableCells.length > 1) {
+        this.applyRichFontToCellsDom(tableCells, "font-family", value);
+        this.restoreCaretToEndOfFirstTableCell(tableCells);
+        this.richEditorEl.focus();
+      } else {
+        this.applyRichSpanStyleAroundSelection("fontFamily", cssVal);
+        this.richEditorEl.focus();
+      }
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.rememberLastFontFamily(value);
+    })();
   }
 
   private applyRichFontSize(value: string): void {
@@ -4309,24 +4439,28 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    const tableCells = this.getRichTableCellsForBulkTextStyle();
-    const cssVal = value.trim() ? value.trim() : "inherit";
-    if (tableCells.length <= 1 && !this.richSelectionIsNonEmptyInEditor()) {
-      new Notice("请先选中文本。");
-      return;
-    }
-    this.rememberRichStateForUndo();
-    if (tableCells.length > 1) {
-      this.applyRichFontToCellsDom(tableCells, "font-size", value);
-      this.restoreCaretToEndOfFirstTableCell(tableCells);
-      this.richEditorEl.focus();
-    } else {
-      this.applyRichSpanStyleAroundSelection("fontSize", cssVal);
-      this.richEditorEl.focus();
-    }
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.rememberLastFontSize(value);
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      const tableCells = this.getRichTableCellsForBulkTextStyle();
+      const cssVal = value.trim() ? value.trim() : "inherit";
+      if (tableCells.length <= 1 && !this.richSelectionIsNonEmptyInEditor()) {
+        new Notice("请先选中文本。");
+        return;
+      }
+      this.rememberRichStateForUndo();
+      if (tableCells.length > 1) {
+        this.applyRichFontToCellsDom(tableCells, "font-size", value);
+        this.restoreCaretToEndOfFirstTableCell(tableCells);
+        this.richEditorEl.focus();
+      } else {
+        this.applyRichSpanStyleAroundSelection("fontSize", cssVal);
+        this.richEditorEl.focus();
+      }
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.rememberLastFontSize(value);
+    })();
   }
 
   private async applyRichTextColorCustom(): Promise<void> {
@@ -4335,7 +4469,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.settings.lastTextColor
     );
     if (!color) return;
-    this.applyRichTextColor(color);
+    await this.applyRichTextColor(color);
   }
 
   private async applyRichHighlightColorCustom(): Promise<void> {
@@ -4344,15 +4478,15 @@ export default class YoriEditorPlugin extends Plugin {
       this.settings.lastHighlightColor
     );
     if (!color) return;
-    this.applyRichHighlightColor(color);
+    await this.applyRichHighlightColor(color);
   }
 
   private normalizeToolbarPresetColor(value: string): string {
     const v = (value || "").trim();
     if (!v || v === "transparent") return "";
-    const probe = document.createElement("span");
+    const probe = yoriDetachedEl("span");
     probe.style.color = v;
-    document.body.appendChild(probe);
+    activeDocument.body.appendChild(probe);
     const n = (window.getComputedStyle(probe).color || "").replace(/\s+/g, "").toLowerCase();
     probe.remove();
     return n;
@@ -4360,12 +4494,12 @@ export default class YoriEditorPlugin extends Plugin {
 
   private getRichToolbarSelectionColor(kind: "fore" | "hilite"): string {
     if (!this.richEditorEl) return "";
-    const ae = document.activeElement;
+    const ae = activeDocument.activeElement;
     if (!ae || (ae !== this.richEditorEl && !this.richEditorEl.contains(ae))) return "";
     this.richEditorEl.focus();
     try {
       const cmd = kind === "hilite" ? "backColor" : "foreColor";
-      const raw = document.queryCommandValue(cmd);
+      const raw = activeDocument.queryCommandValue(cmd);
       if (typeof raw === "string" && raw && raw !== "false") return raw;
     } catch {
       /* ignore */
@@ -4426,9 +4560,9 @@ export default class YoriEditorPlugin extends Plugin {
   private normalizeToolbarPresetBorderColor(value: string): string {
     const v = (value || "").trim();
     if (!v || v === "transparent") return "";
-    const probe = document.createElement("div");
+    const probe = yoriDetachedEl("div");
     probe.style.border = `1px solid ${v}`;
-    document.body.appendChild(probe);
+    activeDocument.body.appendChild(probe);
     const n = (window.getComputedStyle(probe).borderColor || "").replace(/\s+/g, "").toLowerCase();
     probe.remove();
     return n;
@@ -4557,34 +4691,39 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo(true);
-    const targets = this.collectRichBorderWrappersForSelection(true);
-    if (!targets.length) {
-      new Notice("请先选中段落后再调整边框粗细（表格单元格、列表项内不可用）。");
-      return;
-    }
-    targets.forEach((w) => {
-      w.classList.add(YORI_RICH_BORDERED_CLASS);
-      const color = this.getRichBorderFrameResolvedColorHex(w);
-      w.style.border = `${width} solid ${color}`;
-    });
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.ensureRichTrailingParagraph();
-    this.refreshRichBorderPanelIfOpen();
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      this.rememberRichStateForUndo(true);
+      const targets = this.collectRichBorderWrappersForSelection(true);
+      if (!targets.length) {
+        new Notice("请先选中段落后再调整边框粗细（表格单元格、列表项内不可用）。");
+        return;
+      }
+      targets.forEach((w) => {
+        w.classList.add(YORI_RICH_BORDERED_CLASS);
+        const color = this.getRichBorderFrameResolvedColorHex(w);
+        w.style.border = `${width} solid ${color}`;
+      });
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.ensureRichTrailingParagraph();
+      this.refreshRichBorderPanelIfOpen();
+    })();
   }
 
-  private applyRichHighlightColor(color: string): void {
+  private async applyRichHighlightColor(color: string): Promise<void> {
     if (!this.richEditorEl) {
       new Notice("请先进入高级编辑模式。");
       return;
     }
+    await this.restoreRichEditingSurfaceForMutation();
     const tableCells = this.getRichTableCellsForBulkTextStyle();
     if (tableCells.length <= 1) {
       this.rememberRichStateForUndo();
       this.prepareRichEditorForExecStyleCommands();
       const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
-      document.execCommand("hiliteColor", false, color);
+      activeDocument.execCommand("hiliteColor", false, color);
       this.restoreTableCellBackgrounds(cellBgs);
       this.fixRichHighlightMarkForegroundAfterHiliteCommand();
       this.markRichDirty();
@@ -4760,14 +4899,14 @@ export default class YoriEditorPlugin extends Plugin {
     if (inline.endsWith("rem")) {
       const n = parseFloat(inline);
       if (!Number.isFinite(n)) return null;
-      const rootFs = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
+      const rootFs = parseFloat(window.getComputedStyle(activeDocument.documentElement).fontSize) || 16;
       return (n * rootFs) / fs;
     }
     const unitless = parseFloat(inline);
     return Number.isFinite(unitless) ? unitless : null;
   }
 
-  private resolveRichBlockLineSpacingKey(block: HTMLElement): "__default__" | "__custom__" | string {
+  private resolveRichBlockLineSpacingKey(block: HTMLElement): string {
     const inline = (block.style.lineHeight || "").trim();
     if (!inline) return "__default__";
     const factor = this.parseRichLineHeightToFactor(block, inline);
@@ -4779,7 +4918,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   /** 与 getSelectedRichBlocks 一致：光标折叠时为当前块；多段落选区一致时才返回预设键 */
-  private getRichLineSpacingActiveKey(): "default" | string | null {
+  private getRichLineSpacingActiveKey(): string | null {
     if (!this.richEditorEl) return null;
     const blocks = this.getSelectedRichBlocks();
     if (!blocks.length) return null;
@@ -4812,29 +4951,35 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private applyRichLineSpacing(lineHeight: string | null): void {
-    const blocks = this.getSelectedRichBlocks();
-    if (!blocks.length) {
-      new Notice("请先选中段落后再设置行间距。");
-      return;
-    }
-    this.rememberRichStateForUndo();
-    blocks.forEach((block) => {
-      if (!lineHeight) {
-        block.style.removeProperty("line-height");
-      } else {
-        block.style.lineHeight = lineHeight;
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      const blocks = this.getSelectedRichBlocks();
+      if (!blocks.length) {
+        new Notice("请先选中段落后再设置行间距。");
+        return;
       }
-    });
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.syncRichLineSpacingToolbarState();
+      this.rememberRichStateForUndo();
+      blocks.forEach((block) => {
+        if (!lineHeight) {
+          block.style.removeProperty("line-height");
+        } else {
+          block.style.lineHeight = lineHeight;
+        }
+      });
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.syncRichLineSpacingToolbarState();
+    })();
   }
 
   private cycleRichAlignmentFromCurrent(): void {
-    const next = (this.richAlignCurrentIndex + 1) % RICH_ALIGN_STEPS.length;
-    this.runRichCommand(RICH_ALIGN_STEPS[next].cmd);
-    this.richAlignCurrentIndex = next;
-    this.syncRichAlignButtonBySelection();
+    void (async () => {
+      const next = (this.richAlignCurrentIndex + 1) % RICH_ALIGN_STEPS.length;
+      await this.runRichCommand(RICH_ALIGN_STEPS[next].cmd);
+      this.richAlignCurrentIndex = next;
+      this.syncRichAlignButtonBySelection();
+    })();
   }
 
   private getCurrentRichAlignBlock(): HTMLElement | null {
@@ -4882,7 +5027,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   private getRichCaretContextNode(range: Range): Node | null {
     const container = range.startContainer;
-    if (!(container instanceof Element)) return container;
+    if (!(container.instanceOf(Element))) return container;
     const offset = range.startOffset;
     const childAt = container.childNodes.item(offset) ?? null;
     const childBefore = container.childNodes.item(Math.max(0, offset - 1)) ?? null;
@@ -4893,15 +5038,15 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return null;
     const contextNode = this.getRichCaretContextNode(range);
     if (!contextNode) return null;
-    let current: Node | null = contextNode instanceof Element ? contextNode : contextNode.parentNode;
+    let current: Node | null = contextNode.instanceOf(Element) ? contextNode : contextNode.parentNode;
     const blockSelector = "p,div,li,blockquote,h1,h2,h3,h4,h5,h6,td,th";
     while (current && current !== this.richEditorEl) {
-      if (current instanceof HTMLElement && current.matches(blockSelector)) {
+      if (current.instanceOf(HTMLElement) && current.matches(blockSelector)) {
         return current;
       }
       current = current.parentNode;
     }
-    const fallback = contextNode instanceof HTMLElement ? contextNode : contextNode.parentElement;
+    const fallback = contextNode.instanceOf(HTMLElement) ? contextNode : contextNode.parentElement;
     if (!fallback || fallback === this.richEditorEl) return null;
     return this.richEditorEl.contains(fallback) ? fallback : null;
   }
@@ -4937,7 +5082,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private wrapRichBlockInBorderFrame(block: HTMLElement): HTMLElement {
-    const div = document.createElement("div");
+    const div = yoriDetachedEl("div");
     div.classList.add(YORI_RICH_BORDERED_CLASS);
     block.style.removeProperty("border");
     block.style.removeProperty("padding");
@@ -4974,7 +5119,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (block.classList.contains(YORI_RICH_BORDERED_CLASS)) {
         wrappers.add(block);
       } else {
-        const inner = block.closest(`.${YORI_RICH_BORDERED_CLASS}`) as HTMLElement | null;
+        const inner = block.closest(`.${YORI_RICH_BORDERED_CLASS}`) as unknown as HTMLElement | null;
         if (inner && this.richEditorEl.contains(inner)) {
           wrappers.add(inner);
         } else {
@@ -5033,7 +5178,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private wrapSiblingRunInBorderFrame(parent: Node, run: HTMLElement[]): HTMLElement {
-    const div = document.createElement("div");
+    const div = yoriDetachedEl("div");
     div.classList.add(YORI_RICH_BORDERED_CLASS);
     const first = run[0];
     for (const b of run) {
@@ -5053,20 +5198,24 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo(true);
-    const targets = this.collectRichBorderWrappersForSelection(true);
-    if (!targets.length) {
-      new Notice("请先选中段落后再添加边框（表格单元格、列表项内不可用）。");
-      return;
-    }
-    targets.forEach((w) => {
-      w.classList.add(YORI_RICH_BORDERED_CLASS);
-      w.style.border = `${width} solid ${color}`;
-    });
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.ensureRichTrailingParagraph();
-    this.refreshRichBorderPanelIfOpen();
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      this.rememberRichStateForUndo(true);
+      const targets = this.collectRichBorderWrappersForSelection(true);
+      if (!targets.length) {
+        new Notice("请先选中段落后再添加边框（表格单元格、列表项内不可用）。");
+        return;
+      }
+      targets.forEach((w) => {
+        w.classList.add(YORI_RICH_BORDERED_CLASS);
+        w.style.border = `${width} solid ${color}`;
+      });
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.ensureRichTrailingParagraph();
+      this.refreshRichBorderPanelIfOpen();
+    })();
   }
 
   /** 仅改边框颜色；无容器则按 1px 实线创建容器。 */
@@ -5075,25 +5224,29 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo(true);
-    const targets = this.collectRichBorderWrappersForSelection(true);
-    if (!targets.length) {
-      new Notice("请先选中段落后再设置边框颜色（表格单元格、列表项内不可用）。");
-      return;
-    }
-    targets.forEach((w) => {
-      w.classList.add(YORI_RICH_BORDERED_CLASS);
-      const bw = parseFloat(window.getComputedStyle(w).borderTopWidth || "0");
-      if (bw <= 0) {
-        w.style.border = `1px solid ${color}`;
-      } else {
-        w.style.borderColor = color;
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      this.rememberRichStateForUndo(true);
+      const targets = this.collectRichBorderWrappersForSelection(true);
+      if (!targets.length) {
+        new Notice("请先选中段落后再设置边框颜色（表格单元格、列表项内不可用）。");
+        return;
       }
-    });
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.ensureRichTrailingParagraph();
-    this.refreshRichBorderPanelIfOpen();
+      targets.forEach((w) => {
+        w.classList.add(YORI_RICH_BORDERED_CLASS);
+        const bw = parseFloat(window.getComputedStyle(w).borderTopWidth || "0");
+        if (bw <= 0) {
+          w.style.border = `1px solid ${color}`;
+        } else {
+          w.style.borderColor = color;
+        }
+      });
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.ensureRichTrailingParagraph();
+      this.refreshRichBorderPanelIfOpen();
+    })();
   }
 
   private clearRichParagraphBorder(): void {
@@ -5101,37 +5254,41 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice("请先进入高级编辑模式。");
       return;
     }
-    this.rememberRichStateForUndo(true);
-    const blocks = this.getSelectedRichBlocks();
-    if (!blocks.length) {
-      new Notice("请先选中段落后再清除边框。");
-      return;
-    }
-    const wrappers = new Set<HTMLElement>();
-    for (const block of blocks) {
-      if (block === this.richEditorEl) continue;
-      if (block.classList.contains(YORI_RICH_BORDERED_CLASS)) {
-        wrappers.add(block);
-        continue;
+    void (async () => {
+      await this.restoreRichEditingSurfaceForMutation();
+      if (!this.richEditorEl) return;
+      this.rememberRichStateForUndo(true);
+      const blocks = this.getSelectedRichBlocks();
+      if (!blocks.length) {
+        new Notice("请先选中段落后再清除边框。");
+        return;
       }
-      const wrap = block.closest(`.${YORI_RICH_BORDERED_CLASS}`) as HTMLElement | null;
-      if (wrap && this.richEditorEl.contains(wrap)) wrappers.add(wrap);
-    }
-    if (wrappers.size > 0) {
-      wrappers.forEach((w) => this.unwrapRichBorderWrapper(w));
-    } else {
-      blocks.forEach((block) => {
-        if (!this.canApplyRichParagraphBorderToBlock(block)) return;
-        block.style.removeProperty("border");
-        block.style.removeProperty("border-color");
-        block.style.removeProperty("padding");
-        block.style.removeProperty("border-radius");
-      });
-    }
-    this.markRichDirty();
-    this.scheduleRichAutoSave();
-    this.ensureRichTrailingParagraph();
-    this.refreshRichBorderPanelIfOpen();
+      const wrappers = new Set<HTMLElement>();
+      for (const block of blocks) {
+        if (block === this.richEditorEl) continue;
+        if (block.classList.contains(YORI_RICH_BORDERED_CLASS)) {
+          wrappers.add(block);
+          continue;
+        }
+        const wrap = block.closest(`.${YORI_RICH_BORDERED_CLASS}`) as unknown as HTMLElement | null;
+        if (wrap && this.richEditorEl.contains(wrap)) wrappers.add(wrap);
+      }
+      if (wrappers.size > 0) {
+        wrappers.forEach((w) => this.unwrapRichBorderWrapper(w));
+      } else {
+        blocks.forEach((block) => {
+          if (!this.canApplyRichParagraphBorderToBlock(block)) return;
+          block.style.removeProperty("border");
+          block.style.removeProperty("border-color");
+          block.style.removeProperty("padding");
+          block.style.removeProperty("border-radius");
+        });
+      }
+      this.markRichDirty();
+      this.scheduleRichAutoSave();
+      this.ensureRichTrailingParagraph();
+      this.refreshRichBorderPanelIfOpen();
+    })();
   }
 
   /** 旧版笔记中行内 padding/radius 会盖过样式表；加载后剥掉，由 CSS 统一内外边距。 */
@@ -5180,13 +5337,12 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     const last = this.richEditorEl.lastElementChild;
     if (this.isUsableRichDocumentSuffix(last)) return;
-    const p = document.createElement("p");
-    p.innerHTML = "<br>";
-    this.richEditorEl.appendChild(p);
+    const p = this.richEditorEl.createEl("p");
+    yoriFillWithSingleBr(p);
   }
 
   private placeCaretAtEndOfElement(el: HTMLElement): void {
-    const range = document.createRange();
+    const range = activeDocument.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
     const sel = window.getSelection();
@@ -5201,7 +5357,6 @@ export default class YoriEditorPlugin extends Plugin {
    */
   private tryPlaceRichCaretBelowAllBlocks(evt: MouseEvent): boolean {
     if (!this.richEditorEl || !this.richEditorWrapEl || evt.button !== 0) return false;
-    const t = richPointerTargetElement(evt);
     if (getClosestRichTableCellFromTarget(evt.target)) return false;
 
     const wrapRect = this.richEditorWrapEl.getBoundingClientRect();
@@ -5260,12 +5415,12 @@ export default class YoriEditorPlugin extends Plugin {
     const range = sel.getRangeAt(0);
     if (!bordered.contains(range.startContainer)) return;
 
-    const atBlockEnd = document.createRange();
+    const atBlockEnd = activeDocument.createRange();
     atBlockEnd.selectNodeContents(bordered);
     atBlockEnd.collapse(false);
     if (range.compareBoundaryPoints(Range.START_TO_START, atBlockEnd) < 0) return;
 
-    const moveTo = document.createRange();
+    const moveTo = activeDocument.createRange();
     moveTo.selectNodeContents(last);
     moveTo.collapse(false);
     sel.removeAllRanges();
@@ -5296,15 +5451,17 @@ export default class YoriEditorPlugin extends Plugin {
     if (!table) return;
 
     const body = row.parentElement;
-    const newRow = document.createElement("tr");
+    const newRow = yoriDetachedEl("tr");
     const isHeaderRow =
       row.rowIndex === 0 ||
       !!row.closest("thead") ||
       Array.from(row.cells).every((c) => c.tagName === "TH");
     Array.from(row.cells).forEach((sourceCell, idx) => {
       const tag = isHeaderRow ? "td" : sourceCell.tagName === "TH" ? "th" : "td";
-      const nextCell = document.createElement(tag);
-      nextCell.innerHTML = tag === "th" ? `标题${idx + 1}` : "<br>";
+      const nextCell = yoriDetachedEl(tag);
+      nextCell.empty();
+      if (tag === "th") nextCell.setText(`标题${idx + 1}`);
+      else nextCell.createEl("br");
       this.copyRichTableNewCellFormatFromReference(sourceCell, nextCell);
       newRow.appendChild(nextCell);
     });
@@ -5356,8 +5513,10 @@ export default class YoriEditorPlugin extends Plugin {
       const refCell = row.cells[index + 1] ?? null;
       const source = row.cells[index];
       const tag = source?.tagName === "TH" ? "th" : "td";
-      const newCell = document.createElement(tag);
-      newCell.innerHTML = tag === "th" ? "标题" : "<br>";
+      const newCell = yoriDetachedEl(tag);
+      newCell.empty();
+      if (tag === "th") newCell.setText("标题");
+      else newCell.createEl("br");
       row.insertBefore(newCell, refCell);
     });
     this.applyRichTableColumnTypes(table);
@@ -5417,7 +5576,7 @@ export default class YoriEditorPlugin extends Plugin {
     const sel = window.getSelection();
     if (!sel) return;
     try {
-      const range = document.createRange();
+      const range = activeDocument.createRange();
       range.selectNodeContents(cells[0]);
       range.collapse(false);
       sel.removeAllRanges();
@@ -5462,19 +5621,19 @@ export default class YoriEditorPlugin extends Plugin {
   /** 用整格 <mark> 包裹内容，避免 hiliteColor/execCommand 在表格批量场景不生效 */
   private surroundCellContentsWithHighlightMark(cell: HTMLTableCellElement, color: string): void {
     this.stripMarkTagsInCell(cell);
-    const range = document.createRange();
+    const range = activeDocument.createRange();
     range.selectNodeContents(cell);
     if (range.collapsed) {
-      const mark = document.createElement("mark");
+      const mark = yoriDetachedEl("mark");
       mark.style.backgroundColor = color;
       // 浏览器默认样式 mark { color: black } 会盖住单元格/span 上的前景色
       mark.style.setProperty("color", "inherit");
-      mark.appendChild(document.createElement("br"));
+      mark.appendChild(yoriDetachedEl("br"));
       cell.appendChild(mark);
       return;
     }
     const contents = range.extractContents();
-    const mark = document.createElement("mark");
+    const mark = yoriDetachedEl("mark");
     mark.style.backgroundColor = color;
     mark.style.setProperty("color", "inherit");
     mark.appendChild(contents);
@@ -5488,7 +5647,7 @@ export default class YoriEditorPlugin extends Plugin {
   private fixRichHighlightMarkForegroundAfterHiliteCommand(): void {
     const sel = window.getSelection();
     if (!sel?.anchorNode) return;
-    const start = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement;
+    const start = sel.anchorNode.instanceOf(Element) ? sel.anchorNode : sel.anchorNode.parentElement;
     let el: HTMLElement | null = start?.closest("mark") ?? null;
     while (el) {
       if (!el.style.color) el.style.setProperty("color", "inherit");
@@ -5593,7 +5752,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     this.richEditorEl.focus();
     try {
-      document.execCommand("cut");
+      activeDocument.execCommand("cut");
     } catch {
       /* ignore */
     }
@@ -5606,7 +5765,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     this.richEditorEl.focus();
     try {
-      document.execCommand("copy");
+      activeDocument.execCommand("copy");
     } catch {
       /* ignore */
     }
@@ -5619,7 +5778,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     this.richEditorEl.focus();
     try {
-      if (document.execCommand("paste")) {
+      if (activeDocument.execCommand("paste")) {
         this.scheduleRichEditorHydratePasses();
         this.markRichDirty();
         this.scheduleRichAutoSave();
@@ -5629,16 +5788,17 @@ export default class YoriEditorPlugin extends Plugin {
       /* fallthrough */
     }
     try {
+      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron clipboard bridge */
       const req = (globalThis as unknown as { require?: (id: string) => { clipboard?: { readText?: () => string } } })
         .require;
       const text = req?.("electron")?.clipboard?.readText?.();
       if (typeof text !== "string") return;
       if (text.length > 0 && isBareHttpUrlPaste(text)) {
-        this.runRichInsertHtml(richExternalLinkHtmlFromUrl(text));
+        void this.runRichInsertHtml(richExternalLinkHtmlFromUrl(text));
         return;
       }
       this.rememberRichStateForUndo();
-      document.execCommand("insertText", false, text);
+      activeDocument.execCommand("insertText", false, text);
       this.scheduleRichEditorHydratePasses();
       this.markRichDirty();
       this.scheduleRichAutoSave();
@@ -5801,9 +5961,9 @@ export default class YoriEditorPlugin extends Plugin {
     const normalizeBg = (value: string): string => {
       const v = (value || "").trim();
       if (!v || v === "transparent" || v === "rgba(0, 0, 0, 0)") return "";
-      const probe = document.createElement("span");
+      const probe = yoriDetachedEl("span");
       probe.style.backgroundColor = v;
-      document.body.appendChild(probe);
+      activeDocument.body.appendChild(probe);
       const n = (window.getComputedStyle(probe).backgroundColor || "").replace(/\s+/g, "").toLowerCase();
       probe.remove();
       return n;
@@ -5892,7 +6052,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   /** 改表格边框颜色时保留当前线宽（无或非数值则默认主预设）。 */
   private getRichTableBorderWidthTokenForApply(table: HTMLTableElement): string {
-    const first = table.querySelector("th, td") as HTMLElement | null;
+    const first = table.querySelector("th, td");
     if (!first) return RICH_BORDER_MAIN_WIDTH;
     const w = window.getComputedStyle(first).borderTopWidth;
     const n = parseFloat(w || "0");
@@ -5908,7 +6068,7 @@ export default class YoriEditorPlugin extends Plugin {
       new Notice(richNoticeStrings(this.uiLang()).cursorInTable);
       return;
     }
-    const first = table.querySelector("th, td") as HTMLElement | null;
+    const first = table.querySelector("th, td") as unknown as HTMLElement | null;
     const color = first ? this.getRichBorderFrameResolvedColorHex(first) : RICH_BORDER_DEFAULT_COLOR;
     this.rememberRichStateForUndo();
     table.querySelectorAll("th, td").forEach((c) => {
@@ -5945,7 +6105,7 @@ export default class YoriEditorPlugin extends Plugin {
     const cell = targetCell ?? this.getCurrentRichTableCell();
     if (!cell) return null;
     const table = cell.closest("table");
-    return table as HTMLTableElement | null;
+    return table;
   }
 
   private handleRichEditorContextMenu(evt: MouseEvent): void {
@@ -6043,9 +6203,9 @@ export default class YoriEditorPlugin extends Plugin {
       });
     };
     const normalizeColor = (value: string): string => {
-      const probe = document.createElement("span");
+      const probe = yoriDetachedEl("span");
       probe.style.color = value;
-      document.body.appendChild(probe);
+      activeDocument.body.appendChild(probe);
       const normalized = (window.getComputedStyle(probe).color || "").replace(/\s+/g, "").toLowerCase();
       probe.remove();
       return normalized;
@@ -6104,7 +6264,9 @@ export default class YoriEditorPlugin extends Plugin {
         this.getUnifiedCellBackgroundForColorUI(cell),
         (color) => this.applyRichTableCellBackground(color, cell),
         () => this.applyRichTableCellBackground(null, cell),
-        () => this.applyRichTableCellBackgroundCustom(cell)
+        () => {
+          void this.applyRichTableCellBackgroundCustom(cell);
+        }
       );
     });
     addSubmenu(tm.borderSettings, (panel) => {
@@ -6120,7 +6282,7 @@ export default class YoriEditorPlugin extends Plugin {
             cls: "yori-rich-table-color-swatch",
             attr: { "aria-label": tm.ariaBorderColor(hex), title: hex }
           });
-          swatch.style.backgroundColor = hex;
+          swatch.setCssProps({ "background-color": hex });
           if (selectedColor && normalizeColor(hex) === selectedColor) {
             swatch.addClass("is-active");
           }
@@ -6180,16 +6342,20 @@ export default class YoriEditorPlugin extends Plugin {
     addItem(tm.deleteColumn, () => this.removeRichTableColumn(cell), true);
     addDivider();
     if (showConvertToNumbered) {
-      addItem(tm.convertNumbered, () => this.convertRichTableColumnToNumbered(cell));
+      addItem(tm.convertNumbered, () => {
+        void this.convertRichTableColumnToNumbered(cell);
+      });
     }
     if (showConvertToMarked) {
-      addItem(tm.convertMarked, () => this.convertRichTableColumnToMarked(cell));
+      addItem(tm.convertMarked, () => {
+        void this.convertRichTableColumnToMarked(cell);
+      });
     }
     if (showRestoreNormalColumn) {
       addItem(tm.restoreNormalColumn, () => this.convertRichTableColumnToNormal(cell));
     }
 
-    document.body.appendChild(menu);
+    activeDocument.body.appendChild(menu);
     this.richTableContextMenuEl = menu;
 
     const rect = menu.getBoundingClientRect();
@@ -6239,9 +6405,9 @@ export default class YoriEditorPlugin extends Plugin {
    * 将图片/音视频/PDF 等包成独立块：外层可编辑容器内为 contenteditable=false，便于后面落光标并整段删除。
    */
   private wrapRichMediaBlock(media: HTMLElement): HTMLElement {
-    const block = document.createElement("div");
+    const block = yoriDetachedEl("div");
     block.className = YORI_RICH_MEDIA_PARAGRAPH_CLASS;
-    const holder = document.createElement("div");
+    const holder = yoriDetachedEl("div");
     holder.className = YORI_RICH_ATOMIC_EMBED_CLASS;
     holder.contentEditable = "false";
     holder.appendChild(media);
@@ -6251,12 +6417,12 @@ export default class YoriEditorPlugin extends Plugin {
 
   /** Obsidian 式：可拖动右下角改变宽度，脱水合为 ![[path|width]] */
   private wrapRichImageWithResizeHost(img: HTMLImageElement): HTMLElement {
-    const host = document.createElement("div");
+    const host = yoriDetachedEl("div");
     host.className = YORI_IMG_RESIZE_HOST_CLASS;
     host.contentEditable = "false";
-    const frame = document.createElement("div");
+    const frame = yoriDetachedEl("div");
     frame.className = "yori-rich-img-resize-frame";
-    const handle = document.createElement("div");
+    const handle = yoriDetachedEl("div");
     handle.className = "yori-rich-img-resize-handle";
     handle.setAttribute("draggable", "false");
     handle.setAttribute("aria-label", "拖动调整图片宽度");
@@ -6275,14 +6441,14 @@ export default class YoriEditorPlugin extends Plugin {
 
   private cleanupRichImageResizeListeners(): void {
     if (this.richImageResizeMoveHandler) {
-      document.removeEventListener("mousemove", this.richImageResizeMoveHandler);
+      activeDocument.removeEventListener("mousemove", this.richImageResizeMoveHandler);
       this.richImageResizeMoveHandler = null;
     }
     if (this.richImageResizeUpHandler) {
-      document.removeEventListener("mouseup", this.richImageResizeUpHandler, true);
+      activeDocument.removeEventListener("mouseup", this.richImageResizeUpHandler, true);
       this.richImageResizeUpHandler = null;
     }
-    document.body.style.removeProperty("user-select");
+    activeDocument.body.style.removeProperty("user-select");
     this.richImageResizeSession = null;
   }
 
@@ -6295,7 +6461,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.rememberRichStateForUndo();
     const startW = img.getBoundingClientRect().width;
     this.richImageResizeSession = { img, startX: evt.clientX, startW };
-    document.body.style.userSelect = "none";
+    activeDocument.body.style.userSelect = "none";
 
     const onMove = (e: MouseEvent): void => {
       const s = this.richImageResizeSession;
@@ -6321,24 +6487,24 @@ export default class YoriEditorPlugin extends Plugin {
     };
     this.richImageResizeMoveHandler = onMove;
     this.richImageResizeUpHandler = onUp;
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp, true);
+    activeDocument.addEventListener("mousemove", onMove);
+    activeDocument.addEventListener("mouseup", onUp, true);
   }
 
   /** Obsidian 风格：![[非内联预览类文件]] 在笔记中表现为文件嵌入条 */
   private createRichGenericFileEmbed(dest: TFile, rawInner: string): HTMLElement {
-    const row = document.createElement("div");
+    const row = yoriDetachedEl("div");
     row.className = "yori-rich-generic-embed";
     row.setAttribute("data-yori-file-embed", rawInner);
     row.contentEditable = "false";
-    const icon = document.createElement("span");
+    const icon = yoriDetachedEl("span");
     icon.className = "yori-rich-generic-embed-icon";
     try {
       setIcon(icon, "file");
     } catch {
       // ignore
     }
-    const text = document.createElement("a");
+    const text = yoriDetachedEl("a");
     text.className = "internal-link";
     text.setAttribute("data-href", dest.path);
     text.setAttribute("href", dest.path);
@@ -6395,7 +6561,7 @@ export default class YoriEditorPlugin extends Plugin {
       .filter((s) => s.length > 0)
       .join("<br>");
     if (mergedHtml) {
-      topLeft.innerHTML = mergedHtml;
+      yoriReplaceChildrenFromSanitizedHtml(topLeft, mergedHtml);
     }
 
     topLeft.rowSpan = maxRow - minRow + 1;
@@ -6427,11 +6593,13 @@ export default class YoriEditorPlugin extends Plugin {
       return;
     }
     const tag = cell.tagName.toLowerCase();
+    const makeExtraCell = (): HTMLTableCellElement =>
+      tag === "th" ? yoriDetachedEl("th") : yoriDetachedEl("td");
 
     if (originalColSpan > 1) {
       for (let i = 1; i < originalColSpan; i++) {
-        const extra = document.createElement(tag);
-        extra.innerHTML = "<br>";
+        const extra = makeExtraCell();
+        yoriFillWithSingleBr(extra);
         row.insertBefore(extra, cell.nextSibling);
       }
       cell.colSpan = 1;
@@ -6443,8 +6611,8 @@ export default class YoriEditorPlugin extends Plugin {
         const targetRow = table.rows[pos.row + i];
         if (!targetRow) continue;
         for (let j = 0; j < originalColSpan; j++) {
-          const extra = document.createElement(tag);
-          extra.innerHTML = "<br>";
+          const extra = makeExtraCell();
+          yoriFillWithSingleBr(extra);
           const currentModel = buildRichTableGrid(table);
           const ref = findOriginCellAtOrAfter(currentModel, pos.row + i, pos.col + j);
           if (ref && ref.parentElement === targetRow) {
@@ -6461,7 +6629,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.scheduleRichAutoSave();
   }
 
-  private convertRichTableColumnToNumbered(cell: HTMLTableCellElement): void {
+  private async convertRichTableColumnToNumbered(cell: HTMLTableCellElement): Promise<void> {
     const table = this.getCurrentRichTable(cell);
     if (!table) return;
     const colIndex = this.resolveRichTableColumnIndex(table, cell);
@@ -6477,7 +6645,10 @@ export default class YoriEditorPlugin extends Plugin {
       return;
     }
     if (this.columnHasMeaningfulContent(contentRows, colIndex)) {
-      const ok = window.confirm("该列已有内容，转换为编号列将清空该列现有数据。是否继续？");
+      const ok = await openYoriConfirmModal(
+        this.app,
+        "该列已有内容，转换为编号列将清空该列现有数据。是否继续？"
+      );
       if (!ok) return;
     }
     if (headerCell) headerCell.dataset.yoriColType = "numbered";
@@ -6487,7 +6658,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.scheduleRestoreRichEditorFocusInTableCell(cell);
   }
 
-  private convertRichTableColumnToMarked(cell: HTMLTableCellElement): void {
+  private async convertRichTableColumnToMarked(cell: HTMLTableCellElement): Promise<void> {
     const table = this.getCurrentRichTable(cell);
     if (!table) return;
     const colIndex = this.resolveRichTableColumnIndex(table, cell);
@@ -6503,7 +6674,10 @@ export default class YoriEditorPlugin extends Plugin {
       return;
     }
     if (this.columnHasMeaningfulContent(contentRows, colIndex)) {
-      const ok = window.confirm("该列已有内容，转换为标记列将清空该列现有数据。是否继续？");
+      const ok = await openYoriConfirmModal(
+        this.app,
+        "该列已有内容，转换为标记列将清空该列现有数据。是否继续？"
+      );
       if (!ok) return;
     }
     if (headerCell) headerCell.dataset.yoriColType = "marked";
@@ -6553,33 +6727,36 @@ export default class YoriEditorPlugin extends Plugin {
     for (let row = 1; row < model.grid.length; row++) {
       const target = getOriginCellByGridPosition(table, row, colIndex);
       if (!target) continue;
-      const checkbox = target.querySelector("input[type='checkbox']") as HTMLInputElement | null;
+      const checkbox = target.querySelector("input[type='checkbox']") as unknown as HTMLInputElement | null;
       if (checkbox) {
         checkbox.checked = checked;
         if (!checkbox.nextSibling) {
-          target.appendChild(document.createElement("br"));
+          target.appendChild(yoriDetachedEl("br"));
         }
       } else {
-        target.innerHTML = `<input type='checkbox' ${checked ? "checked" : ""} /><br>`;
+        yoriFillCheckboxBrCell(target, checked);
       }
     }
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
 
-  private insertRichImageIntoCell(cell: HTMLTableCellElement): void {
-    const url = window.prompt("请输入图片链接（http/https 或 data URL）", "https://");
-    if (!url) return;
-    const safeUrl = url.trim();
+  private async insertRichImageIntoCell(cell: HTMLTableCellElement): Promise<void> {
+    const res = await openYoriImageUrlAltModal(this.app);
+    if (!res) return;
+    const safeUrl = res.url.trim();
     if (!safeUrl) return;
-    const alt = window.prompt("请输入图片说明（可选）", "") ?? "";
-      cell.innerHTML = `<img src="${safeUrl}" alt="${escapeHtml(alt)}" style="max-width:100%;height:auto;display:block;" />`;
+    cell.empty();
+    const img = cell.createEl("img");
+    img.setAttr("src", safeUrl);
+    img.setAttr("alt", res.alt);
+    img.setCssProps({ "max-width": "100%", height: "auto", display: "block" });
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
 
   private clearRichTableCell(cell: HTMLTableCellElement): void {
-    cell.innerHTML = "<br>";
+    yoriFillWithSingleBr(cell);
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
@@ -6588,9 +6765,9 @@ export default class YoriEditorPlugin extends Plugin {
     const row = cell.parentElement as HTMLTableRowElement | null;
     if (!row) return;
     Array.from(row.cells).forEach((c) => {
-      const el = c as HTMLTableCellElement;
+      const el = c;
       if (el.dataset.yoriColType) return;
-      el.innerHTML = "<br>";
+      yoriFillWithSingleBr(el);
     });
     this.markRichDirty();
     this.scheduleRichAutoSave();
@@ -6605,7 +6782,7 @@ export default class YoriEditorPlugin extends Plugin {
     for (let row = 1; row < model.grid.length; row++) {
       const target = getOriginCellByGridPosition(table, row, colIndex);
       if (!target) continue;
-      target.innerHTML = "<br>";
+      yoriFillWithSingleBr(target);
     }
     this.markRichDirty();
     this.scheduleRichAutoSave();
@@ -6618,10 +6795,10 @@ export default class YoriEditorPlugin extends Plugin {
       const ch = Array.from(cell.children);
       const hasCheckboxOnly =
         (ch.length === 1 &&
-          ch[0] instanceof HTMLInputElement &&
+          ch[0].instanceOf(HTMLInputElement) &&
           ch[0].type === "checkbox") ||
         (ch.length === 2 &&
-          ch[0] instanceof HTMLInputElement &&
+          ch[0].instanceOf(HTMLInputElement) &&
           ch[0].type === "checkbox" &&
           ch[1].tagName === "BR");
       if (hasCheckboxOnly) return false;
@@ -6690,11 +6867,11 @@ export default class YoriEditorPlugin extends Plugin {
         if (type === "numbered") {
           this.replaceRichCellTextPreservingInlineStructure(target, `${row}`);
         } else {
-          const input = target.querySelector("input[type='checkbox']") as HTMLInputElement | null;
+          const input = target.querySelector("input[type='checkbox']");
           if (!input) {
-            target.innerHTML = "<input type='checkbox' /><br>";
+            yoriFillCheckboxBrCell(target, false);
           } else if (!input.nextSibling) {
-            target.appendChild(document.createElement("br"));
+            target.appendChild(yoriDetachedEl("br"));
           }
         }
       }
@@ -6713,7 +6890,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!selection || selection.rangeCount === 0) return [];
     const range = selection.getRangeAt(0);
     const selector = "p,div,li,blockquote,h1,h2,h3,h4,h5,h6,td,th";
-    const blocks = Array.from(this.richEditorEl.querySelectorAll(selector)) as HTMLElement[];
+    const blocks = Array.from(this.richEditorEl.querySelectorAll(selector));
     if (!blocks.length) {
       return [this.richEditorEl];
     }
@@ -6721,7 +6898,7 @@ export default class YoriEditorPlugin extends Plugin {
       const collapsed = this.findClosestRichBlock(selection.anchorNode);
       return collapsed ? [collapsed] : [];
     }
-    return blocks.filter((block) => range.intersectsNode(block));
+    return blocks.filter((block) => range.intersectsNode(block)) as HTMLElement[];
   }
 
   private getSelectedRichTableCells(table: HTMLTableElement): HTMLTableCellElement[] {
@@ -6848,7 +7025,7 @@ export default class YoriEditorPlugin extends Plugin {
   /** 在结束拖选时根据指针落点修正 focus，避免「最后一格没有 mousemove」时 anchor===focus 导致批量样式判成单格。 */
   private syncRichTableDragFocusCellAt(clientX: number, clientY: number): void {
     if (!this.richDragAnchorCell || !this.richEditorEl) return;
-    const el = document.elementFromPoint(clientX, clientY);
+    const el = activeDocument.elementFromPoint(clientX, clientY);
     const cell = el ? getClosestRichTableCellFromTarget(el) : null;
     const anchorTable = this.richDragAnchorCell.closest("table");
     if (
@@ -7055,18 +7232,18 @@ export default class YoriEditorPlugin extends Plugin {
   private normalizeAllRichTables(): void {
     if (!this.richEditorEl) return;
     this.richEditorEl.querySelectorAll("table").forEach((t) => {
-      this.ensureRichTableDefaultColumnWidths(t as HTMLTableElement);
+      this.ensureRichTableDefaultColumnWidths(t);
     });
   }
 
   private ensureRichTableColgroup(table: HTMLTableElement, colCount: number): HTMLTableColElement[] {
     let colgroup = table.querySelector("colgroup");
     if (!colgroup) {
-      colgroup = document.createElement("colgroup");
+      colgroup = yoriDetachedEl("colgroup");
       table.insertBefore(colgroup, table.firstChild);
     }
     while (colgroup.children.length < colCount) {
-      colgroup.appendChild(document.createElement("col"));
+      colgroup.appendChild(yoriDetachedEl("col"));
     }
     while (colgroup.children.length > colCount) {
       colgroup.removeChild(colgroup.lastElementChild as ChildNode);
@@ -7112,7 +7289,7 @@ export default class YoriEditorPlugin extends Plugin {
     let current: Node | null = node;
     while (current) {
       if (
-        current instanceof HTMLElement &&
+        current.instanceOf(HTMLElement) &&
         current !== this.richEditorEl &&
         current.matches(selector) &&
         this.richEditorEl.contains(current)
@@ -7197,7 +7374,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
     this.richEditorEl.querySelectorAll(".yori-rich-img-resize-frame").forEach((frame) => {
       const handles = Array.from(frame.children).filter(
-        (n) => n instanceof HTMLElement && n.classList.contains("yori-rich-img-resize-handle")
+        (n) => n.instanceOf(HTMLElement) && n.classList.contains("yori-rich-img-resize-handle")
       );
       for (let i = 1; i < handles.length; i++) handles[i].remove();
     });
@@ -7249,7 +7426,7 @@ export default class YoriEditorPlugin extends Plugin {
     try {
       const sel = window.getSelection();
       if (sel) {
-        const r = document.createRange();
+        const r = activeDocument.createRange();
         r.setStartAfter(mp);
         r.collapse(true);
         sel.removeAllRanges();
@@ -7264,17 +7441,17 @@ export default class YoriEditorPlugin extends Plugin {
   private mountRichEditor(view: MarkdownView, container: Element): void {
     this.unmountRichEditor();
     const host = createDiv({ cls: "yori-rich-editor-wrap" });
-    host.addEventListener("dragover", (e) => this.handleRichEditorDragOver(e as DragEvent), true);
-    host.addEventListener("drop", (e) => this.handleRichEditorDrop(e as DragEvent), true);
+    host.addEventListener("dragover", (e) => this.handleRichEditorDragOver(e), true);
+    host.addEventListener("drop", (e) => this.handleRichEditorDrop(e), true);
     const editor = host.createDiv({
       cls: "yori-rich-editor",
       attr: { contenteditable: "true", tabindex: "-1" }
     });
-    editor.addEventListener("dragstart", (e) => this.handleRichEditorEmbedDragStart(e as DragEvent), true);
+    editor.addEventListener("dragstart", (e) => this.handleRichEditorEmbedDragStart(e), true);
     editor.spellcheck = true;
     editor.addEventListener("beforeinput", (evt) => {
       if (this.richSuppressRichUndoCapture) return;
-      const e = evt as InputEvent;
+      const e = evt;
       if (e.isComposing) return;
       if (this.tryDeleteRichAtomicEmbedBackward(e)) return;
       if (this.tryDeleteRichSpacerParagraphAfterHrBackward(e)) return;
@@ -7391,7 +7568,7 @@ export default class YoriEditorPlugin extends Plugin {
     editor.addEventListener("keyup", () => this.scheduleRichSelectionVisualSync());
     editor.addEventListener("focus", () => this.scheduleRichSelectionVisualSync());
     editor.addEventListener("focusin", () => this.scheduleRichSelectionVisualSync());
-    editor.addEventListener("paste", (evt) => this.handleRichEditorPasteBareUrl(evt as ClipboardEvent), true);
+    editor.addEventListener("paste", (evt) => this.handleRichEditorPasteBareUrl(evt), true);
     editor.addEventListener(
       "mousedown",
       (evt) => {
@@ -7668,6 +7845,7 @@ export default class YoriEditorPlugin extends Plugin {
     const u = url.trim();
     if (!/^https?:\/\//i.test(u)) return;
     try {
+      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron shell.openExternal bridge */
       const req = (globalThis as unknown as { require?: (id: string) => unknown }).require;
       if (typeof req === "function") {
         const electron = req("electron") as { shell?: { openExternal?: (x: string) => Promise<void> } } | undefined;
@@ -7716,6 +7894,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   private async openVaultFileWithSystemDefault(file: TFile): Promise<boolean> {
     try {
+      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron shell.openPath bridge */
       const anyReq = (globalThis as unknown as { require?: (id: string) => unknown }).require;
       if (typeof anyReq === "function") {
         const electron = anyReq("electron") as { shell?: { openPath?: (x: string) => Promise<string> } };
@@ -7804,7 +7983,7 @@ export default class YoriEditorPlugin extends Plugin {
       const v = node.nodeValue;
       return v && /!\[\[[^\]]+\]\]/.test(v) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     };
-    const w1 = document.createTreeWalker(this.richEditorEl, NodeFilter.SHOW_TEXT, {
+    const w1 = activeDocument.createTreeWalker(this.richEditorEl, NodeFilter.SHOW_TEXT, {
       acceptNode: acceptImageEmbeds
     });
     const imgBatch: Text[] = [];
@@ -7822,7 +8001,7 @@ export default class YoriEditorPlugin extends Plugin {
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     };
-    const walker2 = document.createTreeWalker(this.richEditorEl, NodeFilter.SHOW_TEXT, {
+    const walker2 = activeDocument.createTreeWalker(this.richEditorEl, NodeFilter.SHOW_TEXT, {
       acceptNode: acceptWiki
     });
     const wikiBatch: Text[] = [];
@@ -7844,7 +8023,7 @@ export default class YoriEditorPlugin extends Plugin {
    * 用 PDF.js 读取首页版面尺寸，设置外框 aspect-ratio 与 max-height，使边框比例贴近实际纸张；失败则保留 CSS 默认高度。
    */
   private async sizeRichPdfEmbedToPageAspect(box: HTMLElement, file: TFile): Promise<void> {
-    const iframe = box.querySelector("iframe.yori-rich-pdf-iframe") as HTMLIFrameElement | null;
+    const iframe = box.querySelector("iframe.yori-rich-pdf-iframe");
     if (!iframe) return;
     try {
       const pdfjsLib = await loadPdfJs();
@@ -7921,7 +8100,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.richCheckboxFlagsFromLastNoteLoad =
       checkboxFlags.length > 0 ? [...checkboxFlags] : null;
 
-    this.richEditorEl.innerHTML = mergedHtml;
+    yoriReplaceChildrenFromSanitizedHtml(this.richEditorEl, mergedHtml);
     applyRichCheckboxCheckedStateFromAttributesAfterLoad(this.richEditorEl);
     applyRichCheckboxCheckedFlagsToEditorInTreeOrder(this.richEditorEl, checkboxFlags);
     const unwrapChanged = unwrapRichParagraphsWrappingDirectLists(this.richEditorEl);
@@ -7955,7 +8134,20 @@ export default class YoriEditorPlugin extends Plugin {
     if (norm(next) !== norm(raw)) {
       await this.app.vault.modify(file, next);
     }
+    /** 高级编辑隐藏源码区时 CM 缓冲区若不刷新，`readNoteRawForYori` 仍会读到旧正文，导致异常合并或切换模式后内容倒退。 */
+    this.syncOpenMarkdownViewsWithVaultText(file, next);
     return true;
+  }
+
+  /** 将磁盘一致的全文同步到所有正在编辑该文件的 Markdown 视图（含隐藏的源码缓冲区）。 */
+  private syncOpenMarkdownViewsWithVaultText(file: TFile, fullText: string): void {
+    const normPath = normalizePath(file.path);
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const v = leaf.view;
+      if (v instanceof MarkdownView && v.file && normalizePath(v.file.path) === normPath) {
+        writeMarkdownViewText(v, fullText);
+      }
+    });
   }
 
   /**
@@ -7966,7 +8158,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return [];
     const cur = this.getCurrentRichTableCell();
     if (!cur) return [];
-    const tbl = cur.closest("table") as HTMLTableElement | null;
+    const tbl = cur.closest("table");
     if (!tbl || !this.richEditorEl.contains(tbl)) return [];
 
     const fromDrag = getDraggedRichTableCellsFromAnchors(
@@ -7994,7 +8186,7 @@ export default class YoriEditorPlugin extends Plugin {
     clone: HTMLElement,
     liveCell: HTMLTableCellElement
   ): HTMLTableCellElement | null {
-    const liveTable = liveCell.closest("table") as HTMLTableElement | null;
+    const liveTable = liveCell.closest("table");
     if (!liveTable || !this.richEditorEl?.contains(liveTable)) return null;
     const tables = Array.from(this.richEditorEl.querySelectorAll("table"));
     const ti = tables.indexOf(liveTable);
@@ -8024,8 +8216,8 @@ export default class YoriEditorPlugin extends Plugin {
     const cLast = this.mapLiveTableCellToDehydratedClone(clone, ordered[ordered.length - 1]);
     if (!cFirst || !cLast) return null;
 
-    cFirst.insertBefore(document.createComment("yori-native-sel-a"), cFirst.firstChild);
-    cLast.appendChild(document.createComment("yori-native-sel-b"));
+    cFirst.insertBefore(activeDocument.createComment("yori-native-sel-a"), cFirst.firstChild);
+    cLast.appendChild(activeDocument.createComment("yori-native-sel-b"));
 
     const marked = pickYoriInnerStorageFromDehydratedClone(clone);
     const iA = marked.indexOf(MARK_A);
@@ -8075,6 +8267,101 @@ export default class YoriEditorPlugin extends Plugin {
     return fallback ?? null;
   }
 
+  private getMarkdownViewContentRoot(view: MarkdownView): HTMLElement | null {
+    const el = view.containerEl.querySelector(".view-content");
+    return el?.instanceOf(HTMLElement) ? el : null;
+  }
+
+  /**
+   * 部分版本在 Markdown 窗格 `containerEl` 下会挂与 `.view-content` 并列的全屏层；
+   * 会盖住工具栏与高级编辑区，表现为插件控件与 execCommand 全部「失灵」。
+   */
+  private suppressRichObstructingLeafSiblings(view: MarkdownView): void {
+    const leaf = view.containerEl;
+    for (const node of Array.from(leaf.children)) {
+      if (!node.instanceOf(HTMLElement)) continue;
+      const child = node;
+      if (child.hasClass("view-header")) continue;
+      if (child.hasClass("view-content")) continue;
+      if (!child.hasAttribute("data-yori-rich-leaf-sib")) {
+        child.setAttr("data-yori-rich-leaf-sib", child.style.getPropertyValue("display"));
+      }
+      child.setCssProps({ display: "none", pointerEvents: "none" });
+    }
+  }
+
+  private restoreRichLeafSiblings(view: MarkdownView): void {
+    const leaf = view.containerEl;
+    for (const node of Array.from(leaf.children)) {
+      if (!node.instanceOf(HTMLElement)) continue;
+      const child = node;
+      if (!child.hasAttribute("data-yori-rich-leaf-sib")) continue;
+      const prev = child.getAttr("data-yori-rich-leaf-sib") ?? "";
+      child.removeAttribute("data-yori-rich-leaf-sib");
+      if (prev) child.style.setProperty("display", prev);
+      else child.style.removeProperty("display");
+      child.style.removeProperty("pointer-events");
+    }
+  }
+
+  /** 隐藏 `.view-content` 下除工具栏与高级编辑外壳以外的直连子节点（实时预览下整块原生编辑区常在此处）。 */
+  private suppressRichObstructingViewContentDirectChildren(view: MarkdownView): void {
+    const vc = this.getMarkdownViewContentRoot(view);
+    if (!vc) return;
+    for (const node of Array.from(vc.children)) {
+      if (!node.instanceOf(HTMLElement)) continue;
+      const child = node;
+      if (child === this.toolbarEl || child === this.richEditorWrapEl) continue;
+      if (child.hasClass("yori-editor-toolbar") || child.hasClass("yori-rich-editor-wrap")) continue;
+      if (!child.hasAttribute("data-yori-rich-sup")) {
+        child.setAttr("data-yori-rich-sup", child.style.getPropertyValue("display"));
+      }
+      child.setCssProps({ display: "none", pointerEvents: "none" });
+    }
+  }
+
+  /** 卸载高级编辑或切入阅读模式时恢复直连子节点显示。 */
+  private restoreRichViewContentDirectChildren(view: MarkdownView): void {
+    const vc = this.getMarkdownViewContentRoot(view);
+    if (!vc) return;
+    for (const node of Array.from(vc.children)) {
+      if (!node.instanceOf(HTMLElement)) continue;
+      const child = node;
+      if (!child.hasAttribute("data-yori-rich-sup")) continue;
+      const prev = child.getAttr("data-yori-rich-sup") ?? "";
+      child.removeAttribute("data-yori-rich-sup");
+      if (prev) child.style.setProperty("display", prev);
+      else child.style.removeProperty("display");
+      child.style.removeProperty("pointer-events");
+    }
+  }
+
+  /**
+   * 1.12+ 实时预览下 CM 可能脱离首个 `.markdown-source-view > .cm-editor` 结构；
+   * 需在窗格内（含 Shadow）枚举并隐藏全部 Markdown/CM 层，否则仍会挡住高级编辑或抢走 execCommand。
+   */
+  private forEachMarkdownSubviewLayer(view: MarkdownView, fn: (el: HTMLElement) => void): void {
+    const selector =
+      ".markdown-source-view, .markdown-reading-view, .markdown-preview-view, .cm-editor, .cm-scroller, .cm-content, .cm-gutters";
+    const seen = new WeakSet<HTMLElement>();
+    // 用整块 leaf 容器遍历：1.12 Live Preview 下 CM/预览层偶挂在 `.view-content` 外的结构里
+    const scope = view.containerEl;
+    const run = (root: ParentNode): void => {
+      root.querySelectorAll(selector).forEach((n) => {
+        if (!n.instanceOf(HTMLElement)) return;
+        if (seen.has(n)) return;
+        if (this.richEditorWrapEl?.contains(n)) return;
+        if (this.toolbarEl?.contains(n)) return;
+        seen.add(n);
+        fn(n);
+      });
+      root.querySelectorAll("*").forEach((node) => {
+        if (node.instanceOf(Element) && node.shadowRoot) run(node.shadowRoot);
+      });
+    };
+    run(scope);
+  }
+
   /**
    * 高级编辑：按 Markdown 视图模式切换源码区 / 预览区 / 富文本外壳的显隐。
    * 阅读模式需显示 `.markdown-preview-view`；若一直保持「预览 display:none」会出现预览高度异常。
@@ -8083,20 +8370,25 @@ export default class YoriEditorPlugin extends Plugin {
     if (this.settings.toolbarMode !== "rich") return;
     if (this.richHostView !== view || !this.richEditorWrapEl) return;
 
-    const sourceView = view.containerEl.querySelector(".markdown-source-view") as HTMLElement | null;
-    const sourceEditor = view.containerEl.querySelector(".cm-editor") as HTMLElement | null;
-    const preview = view.containerEl.querySelector(".markdown-preview-view") as HTMLElement | null;
-
     if (view.getMode() === "preview") {
-      if (sourceView) sourceView.style.display = "none";
-      if (sourceEditor) sourceEditor.style.display = "none";
-      if (preview) preview.style.display = "";
-      this.richEditorWrapEl.style.display = "none";
+      this.restoreRichLeafSiblings(view);
+      this.restoreRichViewContentDirectChildren(view);
+      this.forEachMarkdownSubviewLayer(view, (el) => {
+        const reading = el.matches(".markdown-preview-view");
+        el.setCssProps({
+          display: reading ? "" : "none",
+          pointerEvents: reading ? "" : "none",
+        });
+      });
+      this.richEditorWrapEl.setCssProps({ display: "none" });
     } else {
-      if (sourceView) sourceView.style.display = "none";
-      if (sourceEditor) sourceEditor.style.display = "none";
-      if (preview) preview.style.display = "none";
-      this.richEditorWrapEl.style.display = "";
+      // 源码 / 实时预览：并列遮罩 + view-content 内原生编辑外壳与 CM
+      this.suppressRichObstructingLeafSiblings(view);
+      this.suppressRichObstructingViewContentDirectChildren(view);
+      this.forEachMarkdownSubviewLayer(view, (el) => {
+        el.setCssProps({ display: "none", pointerEvents: "none" });
+      });
+      this.richEditorWrapEl.setCssProps({ display: "" });
       const c = this.richMountContainerEl;
       if (c) this.applyRichWrapMaxHeight(c, this.richEditorWrapEl);
     }
@@ -8107,8 +8399,8 @@ export default class YoriEditorPlugin extends Plugin {
     if (this.richMarkdownModeSyncTimer != null) window.clearTimeout(this.richMarkdownModeSyncTimer);
     this.richMarkdownModeSyncTimer = window.setTimeout(() => {
       this.richMarkdownModeSyncTimer = null;
-      const view = this.getActiveMarkdownView();
-      if (!view || this.richHostView !== view) return;
+      const view = this.richHostView;
+      if (!view || !this.richEditorWrapEl) return;
       const prev = this.richLastMarkdownMode;
       const mode = view.getMode();
       this.syncRichMarkdownSubviewVisibility(view);
@@ -8124,9 +8416,9 @@ export default class YoriEditorPlugin extends Plugin {
     if (this.richReadingResumeTimer != null) window.clearTimeout(this.richReadingResumeTimer);
     this.richReadingResumeTimer = window.setTimeout(() => {
       this.richReadingResumeTimer = null;
-      const view = this.getActiveMarkdownView();
+      const view = this.richHostView;
       if (!view || !this.richEditorEl || !this.richEditorWrapEl || !this.richMountContainerEl) return;
-      if (this.richHostView !== view || view.getMode() !== "source") return;
+      if (view.getMode() !== "source") return;
       this.applyRichWrapMaxHeight(this.richMountContainerEl, this.richEditorWrapEl);
       this.bumpRichBoundaryDecorations();
       if (!this.richIsDirty) {
@@ -8145,17 +8437,12 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private setMarkdownViewVisibility(view: MarkdownView, visible: boolean): void {
-    const sourceView = view.containerEl.querySelector(".markdown-source-view") as HTMLElement | null;
-    if (sourceView) {
-      sourceView.style.display = visible ? "" : "none";
-    }
-    const sourceEditor = view.containerEl.querySelector(".cm-editor") as HTMLElement | null;
-    if (sourceEditor) {
-      sourceEditor.style.display = visible ? "" : "none";
-    }
-    const preview = view.containerEl.querySelector(".markdown-preview-view") as HTMLElement | null;
-    if (preview) {
-      preview.style.display = visible ? "" : "none";
+    if (visible) {
+      this.restoreRichLeafSiblings(view);
+      this.restoreRichViewContentDirectChildren(view);
+      this.forEachMarkdownSubviewLayer(view, (el) => {
+        el.setCssProps({ display: "", pointerEvents: "" });
+      });
     }
   }
 
@@ -8178,6 +8465,7 @@ export default class YoriEditorPlugin extends Plugin {
     const innerStored = pickYoriInnerStorageFromDehydratedClone(clone);
     const next = composeNoteWithFrontmatterAndRichBlock(this.richBlockStart, this.richBlockEnd, frontmatter, innerStored);
     await this.app.vault.modify(file, next);
+    this.syncOpenMarkdownViewsWithVaultText(file, next);
     this.richIsDirty = false;
     this.updateRichSaveState("saved");
   }
@@ -8207,7 +8495,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   /** 光标是否落在块级内容的最开头（用于「上一块是媒体时整体删除上一块」） */
-  private isCaretAtRichBlockVisualStart(sel: globalThis.Selection, block: HTMLElement): boolean {
+  private isCaretAtRichBlockVisualStart(sel: Selection, block: HTMLElement): boolean {
     if (!sel.isCollapsed || !this.richEditorEl?.contains(block)) return false;
     const startContainer = sel.anchorNode;
     const startOffset = sel.anchorOffset;
@@ -8253,7 +8541,7 @@ export default class YoriEditorPlugin extends Plugin {
 
     const s = window.getSelection();
     if (s) {
-      const r = document.createRange();
+      const r = activeDocument.createRange();
       if (
         next &&
         next.tagName === "P" &&
@@ -8333,15 +8621,15 @@ export default class YoriEditorPlugin extends Plugin {
     this.richEditorEl.querySelectorAll(`.${YORI_RICH_MEDIA_PARAGRAPH_CLASS}`).forEach((p) => {
       const next = p.nextElementSibling;
       if (next?.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) {
-        const spacer = document.createElement("p");
-        spacer.innerHTML = "<br>";
+        const spacer = yoriDetachedEl("p");
+        yoriFillWithSingleBr(spacer);
         p.insertAdjacentElement("afterend", spacer);
         return;
       }
       if (next && next.tagName === "P" && !next.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) return;
       if (!next || next.tagName !== "P") {
-        const spacer = document.createElement("p");
-        spacer.innerHTML = "<br>";
+        const spacer = yoriDetachedEl("p");
+        yoriFillWithSingleBr(spacer);
         p.insertAdjacentElement("afterend", spacer);
       }
     });
@@ -8383,7 +8671,7 @@ export default class YoriEditorPlugin extends Plugin {
       let sib: Element | null = mp.nextElementSibling;
       while (sib) {
         if (sib.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) break;
-        if (sib instanceof HTMLElement && sib.tagName === "P") {
+        if (sib.instanceOf(HTMLElement) && sib.tagName === "P") {
           if (this.isRichParagraphOnlyExactWikiText(sib, expected)) {
             const rm = sib;
             sib = sib.nextElementSibling;

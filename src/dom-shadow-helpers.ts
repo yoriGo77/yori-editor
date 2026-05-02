@@ -15,7 +15,7 @@ export function containerContainsNodeShadowAware(container: HTMLElement, node: N
       return false;
     }
     const rn = cur.getRootNode();
-    if (rn instanceof ShadowRoot) {
+    if (rn.instanceOf(ShadowRoot)) {
       cur = rn.host;
       continue;
     }
@@ -28,9 +28,9 @@ export function containerContainsNodeShadowAware(container: HTMLElement, node: N
 export function collectHtmlTablesDeep(container: HTMLElement): HTMLTableElement[] {
   const acc: HTMLTableElement[] = [];
   const visit = (root: ParentNode): void => {
-    root.querySelectorAll("table").forEach((t) => acc.push(t as HTMLTableElement));
+    root.querySelectorAll("table").forEach((t) => acc.push(t));
     root.querySelectorAll("*").forEach((el) => {
-      if (el instanceof Element && el.shadowRoot) visit(el.shadowRoot);
+      if (el.instanceOf(Element) && el.shadowRoot) visit(el.shadowRoot);
     });
   };
   visit(container);

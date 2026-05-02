@@ -91,6 +91,10 @@ export function settingsStrings(lang: YoriUiLang) {
       zh: "高级编辑：独立于 markdown 的强编辑模式，视觉与交互持续增强。",
       en: "Advanced editing: a richer visual editing surface independent of plain Markdown."
     }),
+    toolbarModeLine3: pick(lang, {
+      zh: "说明：高级功能（如自定义表格列、拖拽调宽等）以 HTML 等形式保存在「YORI_RICH」注释块内。原生源码/实时预览不会运行这些交互，表格可能仅显示为普通 HTML；需要完整能力时请保持高级编辑，并以高级界面保存。",
+      en: "Note: advanced features (custom table columns, drag‑resize, etc.) persist as HTML inside the YORI_RICH comment block. Built‑in source/Live Preview won’t run those interactions—tables may render as plain HTML. Use Advanced editing when you rely on them."
+    }),
     modeNative: pick(lang, { zh: "原生增强", en: "Native enhancement" }),
     modeRich: pick(lang, { zh: "高级编辑", en: "Advanced editing" }),
     vaultLinkOpen: pick(lang, { zh: "笔记链接打开方式", en: "Note link opening" }),
@@ -108,6 +112,10 @@ export function settingsStrings(lang: YoriUiLang) {
     tipDesktopOnly: pick(lang, {
       zh: "本插件暂不支持移动端。",
       en: "This plugin supports desktop only (not mobile)."
+    }),
+    tipRichDiskFormat: pick(lang, {
+      zh: "高级编辑保存的正文在库里仍是 .md；卸载插件后可用源码查看，但 Obsidian 不会对 YORI 块内的 HTML 提供与本插件相同的编辑体验。",
+      en: "Advanced mode still stores .md on disk; without the plugin you can edit source, but Obsidian won’t offer the same UX for HTML inside the YORI block."
     }),
     donate: pick(lang, { zh: "打赏", en: "Donate" })
   };

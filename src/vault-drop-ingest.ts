@@ -49,6 +49,8 @@ function resolveDroppedOsFileToVaultFile(app: App, absPath: string): TFile | nul
 /** Electron：部分环境下 File 无 `.path`，需 webUtils.getPathForFile */
 function electronGpuPathForFile(file: File): string | undefined {
   try {
+    /* Obsidian 桌面端：require 来自 Electron 主进程注入，非 DOM globalThis */
+    // eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron require bridge, not DOM document
     const req = (globalThis as unknown as { require?: (id: string) => { webUtils?: { getPathForFile?: (f: File) => string } } })
       .require;
     const gpu = req?.("electron")?.webUtils?.getPathForFile;
@@ -69,6 +71,7 @@ function resolveDroppedFileEntryToVaultFile(app: App, file: File): TFile | null 
 }
 
 function resolveFileUrlToVaultFile(app: App, urlStr: string): TFile | null {
+  /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron require bridge, not DOM document */
   const req = (globalThis as unknown as { require?: (id: string) => { fileURLToPath: (s: string) => string } }).require;
   const ftp = req?.("url")?.fileURLToPath;
   if (typeof ftp !== "function") return null;

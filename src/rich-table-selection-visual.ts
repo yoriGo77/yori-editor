@@ -35,7 +35,7 @@ export function refreshRichTableSelectionVisual(ctx: RichTableSelectionVisualCon
   if (ctx.dragAnchorCell && ctx.dragFocusCell) {
     const table = ctx.dragAnchorCell.closest("table");
     if (table && table === ctx.dragFocusCell.closest("table")) {
-      selectedCells = ctx.pickSelectedForTable(table as HTMLTableElement);
+      selectedCells = ctx.pickSelectedForTable(table);
     }
   }
 
@@ -50,7 +50,7 @@ export function refreshRichTableSelectionVisual(ctx: RichTableSelectionVisualCon
     const focusTable = focusEl?.closest("table");
     if (!anchorTable || anchorTable !== focusTable) return;
     if (!richEditorRoot.contains(anchorTable)) return;
-    selectedCells = ctx.pickSelectedForTable(anchorTable as HTMLTableElement);
+    selectedCells = ctx.pickSelectedForTable(anchorTable);
   }
 
   if (selectedCells.length <= 1) return;

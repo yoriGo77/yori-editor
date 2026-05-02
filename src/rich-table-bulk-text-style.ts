@@ -32,9 +32,9 @@ export function computeRichTableCellsForBulkTextStyle(ctx: RichTableBulkTextStyl
     if (fromDrag) return fromDrag;
     const visualOnly = Array.from(
       richEditorEl.querySelectorAll("td.yori-table-cell-selected, th.yori-table-cell-selected")
-    ) as HTMLTableCellElement[];
-    if (visualOnly.length > 1) return sortRichTableCellsDocumentOrder(visualOnly);
-    if (visualOnly.length === 1) return visualOnly;
+    );
+    if (visualOnly.length > 1) return sortRichTableCellsDocumentOrder(visualOnly as HTMLTableCellElement[]);
+    if (visualOnly.length === 1) return visualOnly as HTMLTableCellElement[];
     const fallbackCell = ctx.getCurrentRichTableCell();
     if (fallbackCell && richEditorEl.contains(fallbackCell)) {
       return sortRichTableCellsDocumentOrder(ctx.getRichTableCellsForBulkStyle(fallbackCell));
@@ -52,15 +52,15 @@ export function computeRichTableCellsForBulkTextStyle(ctx: RichTableBulkTextStyl
 
   const visual = Array.from(
     richEditorEl.querySelectorAll("td.yori-table-cell-selected, th.yori-table-cell-selected")
-  ) as HTMLTableCellElement[];
+  );
   if (visual.length > 1) {
-    return sortRichTableCellsDocumentOrder(visual);
+    return sortRichTableCellsDocumentOrder(visual as HTMLTableCellElement[]);
   }
 
   const cell =
     findRichTableCellTouchingSelectionRange(richEditorEl) ?? getRichTableCellFromSelection(richEditorEl);
   if (!cell || !richEditorEl.contains(cell)) {
-    return visual.length === 1 ? visual : [];
+    return visual.length === 1 ? (visual as HTMLTableCellElement[]) : [];
   }
   return sortRichTableCellsDocumentOrder(ctx.getRichTableCellsForBulkStyle(cell));
 }

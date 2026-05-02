@@ -17,7 +17,7 @@
   --yori-soft: #99876c;
   --yori-toolbar-inter-group-gap: 14px;
   position: sticky;
-  z-index: 20;
+  z-index: 900;
   min-height: 48px;
   height: auto;
   display: flex;
@@ -41,6 +41,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
+  z-index: 800;
+  isolation: isolate;
 }
 
 .view-content.yori-rich-view-content-flex .markdown-preview-view {
@@ -51,6 +54,9 @@
 
 .yori-rich-editor-wrap {
   position: relative;
+  z-index: 200;
+  isolation: isolate;
+  pointer-events: auto;
   margin-top: 0;
   border: none;
   border-radius: 0;

@@ -12,6 +12,7 @@ import {
   YORI_VIDEO_RESIZE_WRAP_CLASS,
   YORI_RICH_INLINE_TAG_CLASS
 } from "./yori-constants";
+import { yoriDetachedEl } from "./yori-detached-dom";
 
 function richBlockElement(el: Element): boolean {
   return /^(P|DIV|H[1-6]|UL|OL|LI|TABLE|TR|TD|TH|BLOCKQUOTE|PRE|HR|SECTION|ARTICLE|FIGURE)$/i.test(el.tagName);
@@ -54,10 +55,10 @@ export function unwrapRedundantRichFontSpansInHolder(holder: HTMLElement): void 
   let changed = true;
   while (changed) {
     changed = false;
-    const nodes = Array.from(holder.querySelectorAll("span, font")) as HTMLElement[];
+    const nodes = Array.from(holder.querySelectorAll("span, font"));
     for (const el of nodes) {
       if (!holder.contains(el)) continue;
-      if (!richInlineFontWrapperIsMeaningless(el)) continue;
+      if (!richInlineFontWrapperIsMeaningless(el as HTMLElement)) continue;
       const parent = el.parentNode;
       if (!parent) continue;
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
@@ -135,7 +136,7 @@ function normalizeRichNestedFontSpansInTree(root: HTMLElement): void {
   let changed = true;
   while (changed) {
     changed = false;
-    const spans = Array.from(root.querySelectorAll("span")) as HTMLSpanElement[];
+    const spans = Array.from(root.querySelectorAll("span"));
     spans.sort((a, b) => richDomElementDepthUnderRoot(b, root) - richDomElementDepthUnderRoot(a, root));
     for (const inner of spans) {
       const parent = inner.parentElement;
@@ -150,7 +151,7 @@ function normalizeRichNestedFontSpansInTree(root: HTMLElement): void {
 
 /** 去掉 extractContents 等产生的无子节点空 span */
 function pruneRichEmptyInlineSpansInTree(root: HTMLElement): void {
-  const candidates = Array.from(root.querySelectorAll("span")) as HTMLSpanElement[];
+  const candidates = Array.from(root.querySelectorAll("span"));
   for (const el of candidates) {
     if (!root.contains(el)) continue;
     if (el.childNodes.length === 0) el.remove();
@@ -187,7 +188,7 @@ function richPlainParagraphToStorageLine(p: HTMLParagraphElement): string | null
  */
 function hoistRichParagraphFontStylesIntoInnerSpanForSave(root: HTMLElement): void {
   for (const node of Array.from(root.querySelectorAll("p"))) {
-    const p = node as HTMLParagraphElement;
+    const p = node;
     if (!root.contains(p)) continue;
     if (p.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) continue;
     if (p.closest("td, th")) continue;
@@ -201,7 +202,7 @@ function hoistRichParagraphFontStylesIntoInnerSpanForSave(root: HTMLElement): vo
     const tdeco = (p.style.textDecorationLine || p.style.textDecoration || "").trim();
     if (!ff && !fs && !color && !fw && !fst && !tdeco) continue;
 
-    const span = document.createElement("span");
+    const span = yoriDetachedEl("span");
     if (ff) span.style.fontFamily = ff;
     if (fs) span.style.fontSize = fs;
     if (color) span.style.color = color;
@@ -249,24 +250,24 @@ function rebuildElementStyleWithWhitelist(el: HTMLElement, allowed: ReadonlySet<
  */
 function stripNonAuthorInlineStylesForSave(root: HTMLElement): void {
   for (const el of Array.from(root.querySelectorAll("span[style], font[style]"))) {
-    if (el instanceof HTMLElement) rebuildElementStyleWithWhitelist(el, RICH_SAVE_SPAN_STYLE_KEYS);
+    if (el.instanceOf(HTMLElement)) rebuildElementStyleWithWhitelist(el, RICH_SAVE_SPAN_STYLE_KEYS);
   }
   const pKeys = new Set(["text-align", "line-height"]);
   for (const el of Array.from(root.querySelectorAll("p[style]"))) {
-    if (!(el instanceof HTMLParagraphElement)) continue;
+    if (!(el.instanceOf(HTMLParagraphElement))) continue;
     if (el.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) continue;
     rebuildElementStyleWithWhitelist(el, pKeys);
   }
   const markKeys = new Set(["background-color", "color"]);
   for (const el of Array.from(root.querySelectorAll("mark[style]"))) {
-    if (el instanceof HTMLElement) rebuildElementStyleWithWhitelist(el, markKeys);
+    if (el.instanceOf(HTMLElement)) rebuildElementStyleWithWhitelist(el, markKeys);
   }
 }
 
 function dehydrateRichPdfEmbedsForSave(root: HTMLElement): void {
   root.querySelectorAll(".yori-rich-pdf-embed[data-yori-pdf-embed]").forEach((el) => {
     const raw = el.getAttribute("data-yori-pdf-embed") ?? "";
-    el.replaceWith(document.createTextNode(`![[${raw}]]`));
+    el.replaceWith(activeDocument.createTextNode(`![[${raw}]]`));
   });
 }
 
@@ -276,15 +277,15 @@ function dehydrateLegacyRichVideoAudioForSave(root: HTMLElement): void {
     const raw = el.getAttribute("data-yori-video-embed") ?? "";
     const wrap = el.closest(`.${YORI_VIDEO_RESIZE_WRAP_CLASS}`);
     const repl = wrap && root.contains(wrap) ? wrap : el;
-    repl.replaceWith(document.createTextNode(`![[${raw}]]`));
+    repl.replaceWith(activeDocument.createTextNode(`![[${raw}]]`));
   });
   root.querySelectorAll("audio[data-yori-audio-embed]").forEach((el) => {
     const raw = el.getAttribute("data-yori-audio-embed") ?? "";
-    el.replaceWith(document.createTextNode(`![[${raw}]]`));
+    el.replaceWith(activeDocument.createTextNode(`![[${raw}]]`));
   });
   root.querySelectorAll("[data-yori-file-embed]").forEach((el) => {
     const raw = el.getAttribute("data-yori-file-embed") ?? "";
-    el.replaceWith(document.createTextNode(`![[${raw}]]`));
+    el.replaceWith(activeDocument.createTextNode(`![[${raw}]]`));
   });
 }
 
@@ -295,7 +296,7 @@ function dehydrateRichImageEmbedsForSave(root: HTMLElement): void {
     const raw = el.getAttribute("data-yori-image-embed") ?? "";
     const host = el.closest(`.${YORI_IMG_RESIZE_HOST_CLASS}`);
     const repl = host != null && root.contains(host) ? host : el;
-    repl.replaceWith(document.createTextNode(`![[${raw}]]`));
+    repl.replaceWith(activeDocument.createTextNode(`![[${raw}]]`));
   }
 }
 
@@ -303,7 +304,7 @@ function dehydrateRichImageEmbedsForSave(root: HTMLElement): void {
 function dehydrateRichExternalAnchorsForSave(root: HTMLElement): void {
   const list = Array.from(root.querySelectorAll("a[href]")).filter(
     (el): el is HTMLAnchorElement =>
-      el instanceof HTMLAnchorElement &&
+      el.instanceOf(HTMLAnchorElement) &&
       !el.classList.contains("internal-link") &&
       /^https?:\/\//i.test((el.getAttribute("href") ?? "").trim())
   );
@@ -312,14 +313,14 @@ function dehydrateRichExternalAnchorsForSave(root: HTMLElement): void {
     const inner = (a.textContent ?? "").replace(/\s+/g, " ").trim();
     const md =
       inner === "" || inner === href ? `<${href}>` : `[${escapeMarkdownLinkTitle(inner)}](${href})`;
-    a.replaceWith(document.createTextNode(md));
+    a.replaceWith(activeDocument.createTextNode(md));
   }
 }
 
 /** 写入笔记前：高级编辑内 `#标签` span 还原为纯文本（保持与 Markdown 标签语法一致）。 */
 function dehydrateRichInlineTagsForSave(root: HTMLElement): void {
   root.querySelectorAll(`span.${YORI_RICH_INLINE_TAG_CLASS}`).forEach((el) => {
-    el.replaceWith(document.createTextNode(el.textContent ?? ""));
+    el.replaceWith(activeDocument.createTextNode(el.textContent ?? ""));
   });
 }
 
@@ -327,16 +328,16 @@ function dehydrateRichInlineTagsForSave(root: HTMLElement): void {
 function dehydrateRichWikilinksForSave(root: HTMLElement): void {
   root.querySelectorAll("a.internal-link[data-yori-wikilink]").forEach((el) => {
     const raw = el.getAttribute("data-yori-wikilink") ?? "";
-    el.replaceWith(document.createTextNode(`[[${raw}]]`));
+    el.replaceWith(activeDocument.createTextNode(`[[${raw}]]`));
   });
 }
 
 /** 富文本保存：hydrate 时套的块壳在脱水后展平，避免多余 div 残留在 Markdown 源里 */
 function unwrapRichMediaParagraphShellsForSave(root: HTMLElement): void {
   root.querySelectorAll(`.${YORI_RICH_MEDIA_PARAGRAPH_CLASS}`).forEach((mp) => {
-    const holder = mp.querySelector(`:scope > .${YORI_RICH_ATOMIC_EMBED_CLASS}`) as HTMLElement | null;
+    const holder = mp.querySelector(`:scope > .${YORI_RICH_ATOMIC_EMBED_CLASS}`);
     if (!holder || holder.parentElement !== mp) return;
-    const frag = document.createDocumentFragment();
+    const frag = createFragment();
     while (holder.firstChild) frag.appendChild(holder.firstChild);
     mp.replaceWith(frag);
   });
@@ -344,7 +345,7 @@ function unwrapRichMediaParagraphShellsForSave(root: HTMLElement): void {
 
 function findNextRichParagraphWithDirectList(root: HTMLElement): HTMLParagraphElement | null {
   for (const el of Array.from(root.querySelectorAll("p"))) {
-    if (!(el instanceof HTMLParagraphElement)) continue;
+    if (!(el.instanceOf(HTMLParagraphElement))) continue;
     if (!root.contains(el)) continue;
     if (el.classList.contains(YORI_RICH_MEDIA_PARAGRAPH_CLASS)) continue;
     if (Array.from(el.children).some((c) => c.tagName === "UL" || c.tagName === "OL")) {
@@ -423,7 +424,7 @@ function unwrapRichTaskListLiBodiesForSave(root: HTMLElement): void {
  * 不包含嵌套子 ul/ol 里的 checkbox。
  */
 export function findTaskCheckboxOnDirectListItem(li: HTMLLIElement): HTMLInputElement | null {
-  const direct = li.querySelector(":scope > input[type='checkbox']") as HTMLInputElement | null;
+  const direct = li.querySelector(":scope > input[type='checkbox']") as unknown as HTMLInputElement | null;
   if (direct) return direct;
   for (const kid of Array.from(li.children)) {
     if (kid.tagName === "UL" || kid.tagName === "OL") continue;
@@ -440,13 +441,13 @@ export function findTaskCheckboxOnDirectListItem(li: HTMLLIElement): HTMLInputEl
 function normalizeRichTaskListLiBodiesForGrid(root: HTMLElement): boolean {
   let changed = false;
   for (const li of Array.from(root.querySelectorAll("li.task-list-item"))) {
-    if (!(li instanceof HTMLLIElement)) continue;
+    if (!(li.instanceOf(HTMLLIElement))) continue;
     if (!root.contains(li)) continue;
     if (li.querySelector(`:scope > .${YORI_RICH_TASK_LI_BODY_CLASS}`)) continue;
 
     const cb = li.querySelector(
       ":scope > input.task-list-item-checkbox, :scope > input[type='checkbox']"
-    ) as HTMLInputElement | null;
+    ) as unknown as HTMLInputElement | null;
     if (!cb || cb.type !== "checkbox") continue;
 
     const afterCb: Node[] = [];
@@ -467,7 +468,7 @@ function normalizeRichTaskListLiBodiesForGrid(root: HTMLElement): boolean {
     });
     if (hasBlock) continue;
 
-    const wrap = document.createElement("span");
+    const wrap = yoriDetachedEl("span");
     wrap.classList.add(YORI_RICH_TASK_LI_BODY_CLASS);
     for (const n of afterCb) wrap.appendChild(n);
     li.appendChild(wrap);
@@ -485,7 +486,7 @@ export function normalizeRichTaskListDom(root: HTMLElement | null, opts?: { skip
   let changed = false;
   const uls = Array.from(root.querySelectorAll("ul"));
   for (const ul of uls) {
-    if (!(ul instanceof HTMLUListElement)) continue;
+    if (!(ul.instanceOf(HTMLUListElement))) continue;
     let any = false;
     for (const child of Array.from(ul.children)) {
       if (child.tagName !== "LI") continue;
@@ -510,7 +511,7 @@ export function normalizeRichTaskListDom(root: HTMLElement | null, opts?: { skip
  */
 export function syncRichCheckboxCheckedAttributeForSave(root: HTMLElement): void {
   for (const inp of Array.from(root.querySelectorAll('input[type="checkbox"]'))) {
-    if (!(inp instanceof HTMLInputElement)) continue;
+    if (!(inp.instanceOf(HTMLInputElement))) continue;
     if (inp.checked) inp.setAttribute("checked", "");
     else inp.removeAttribute("checked");
   }

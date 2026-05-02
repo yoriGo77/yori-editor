@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Plugin, PluginSettingTab, Setting, setIcon } from "obsidian";
 
 import type { ToolbarMode, VaultLinkClickOpenMode, YoriEditorSettings } from "./yori-types";
 import { settingsStrings, YORI_UI_LANG_OPTIONS, type YoriUiLang } from "./yori-locale";
@@ -25,7 +25,7 @@ export class YoriEditorSettingTab extends PluginSettingTab {
     const lang: YoriUiLang = this.plugin.settings.pluginUiLanguage === "en" ? "en" : "zh";
     const S = settingsStrings(lang);
 
-    containerEl.createEl("h2", { text: S.title });
+    new Setting(containerEl).setName(S.title).setHeading();
 
     new Setting(containerEl)
       .setName(S.uiLanguage)
@@ -44,7 +44,7 @@ export class YoriEditorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName(S.toolbarMode)
-      .setDesc(`${S.toolbarModeLine1}\n\n${S.toolbarModeLine2}`)
+      .setDesc(`${S.toolbarModeLine1}\n\n${S.toolbarModeLine2}\n\n${S.toolbarModeLine3}`)
       .addDropdown((dropdown) =>
         dropdown
           .addOption("markdown-plus", S.modeNative)
@@ -74,8 +74,9 @@ export class YoriEditorSettingTab extends PluginSettingTab {
 
     const footer = containerEl.createDiv({ cls: "yori-settings-footer" });
     const tipsCol = footer.createDiv({ cls: "yori-settings-footer-tips" });
-    tipsCol.createEl("div", { cls: "yori-settings-footer-tips-heading", text: S.tipsHeading });
-    tipsCol.createEl("div", { cls: "yori-settings-footer-tip-text", text: S.tipDesktopOnly });
+    tipsCol.createDiv({ cls: "yori-settings-footer-tips-heading", text: S.tipsHeading });
+    tipsCol.createDiv({ cls: "yori-settings-footer-tip-text", text: S.tipDesktopOnly });
+    tipsCol.createDiv({ cls: "yori-settings-footer-tip-text", text: S.tipRichDiskFormat });
 
     const donateHref = "https://yorigo77.github.io/";
     const donateLink = footer.createEl("a", {
@@ -85,8 +86,7 @@ export class YoriEditorSettingTab extends PluginSettingTab {
     donateLink.setAttr("target", "_blank");
     donateLink.setAttr("rel", "noopener noreferrer");
     const iconWrap = donateLink.createDiv({ cls: "yori-settings-donate-icon" });
-    iconWrap.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
+    setIcon(iconWrap, "heart");
     donateLink.createSpan({ cls: "yori-settings-donate-label", text: S.donate });
   }
 }

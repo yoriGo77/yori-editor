@@ -4,7 +4,7 @@ export function getRichTableCellsForBulkStyleFromAnchor(
   anchorCell: HTMLTableCellElement,
   pickSelectedForTable: (table: HTMLTableElement) => HTMLTableCellElement[]
 ): HTMLTableCellElement[] {
-  const table = anchorCell.closest("table") as HTMLTableElement | null;
+  const table = anchorCell.closest("table");
   if (!table) return [anchorCell];
   const picked = pickSelectedForTable(table);
   if (picked.length > 0) return picked;
@@ -115,7 +115,7 @@ export function tryGetRichTableCellsFromDragRectangle(
   pickCellsForTable: (table: HTMLTableElement) => HTMLTableCellElement[]
 ): HTMLTableCellElement[] | null {
   if (!richEditorRoot || !dragAnchorCell || !dragFocusCell) return null;
-  const table = dragAnchorCell.closest("table") as HTMLTableElement | null;
+  const table = dragAnchorCell.closest("table");
   if (
     !table ||
     table !== dragFocusCell.closest("table") ||
@@ -144,7 +144,7 @@ export function getCurrentRichTableCellFromEditor(ctx: RichCurrentTableCellConte
   const selection = window.getSelection();
   const anchor = selection?.anchorNode;
   if (anchor) {
-    const node = anchor instanceof Element ? anchor : anchor.parentElement;
+    const node = anchor.instanceOf(Element) ? anchor : anchor.parentElement;
     if (node) {
       const cell = node.closest("td, th");
       if (cell && ctx.richEditorRoot.contains(cell)) {

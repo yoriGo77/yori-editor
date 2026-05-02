@@ -41,14 +41,20 @@ export function blurMarkdownSourceEditor(view: MarkdownView): void {
   } catch {
     /* ignore */
   }
-  const ae = document.activeElement;
+  try {
+    const cm = (view.editor as unknown as { cm?: { contentDOM?: HTMLElement } }).cm;
+    cm?.contentDOM?.blur();
+  } catch {
+    /* ignore */
+  }
+  const ae = activeDocument.activeElement;
   if (!ae || !view.containerEl.contains(ae)) return;
   const inCm =
     ae.closest(".cm-editor") ||
     ae.closest(".cm-scroller") ||
     ae.closest(".cm-content") ||
     ae.closest(".markdown-source-view");
-  if (inCm && ae instanceof HTMLElement) {
+  if (inCm && ae.instanceOf(HTMLElement)) {
     ae.blur();
   }
 }

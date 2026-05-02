@@ -42,7 +42,7 @@ export function attachYoriNativeMarkedCheckboxBridge(
       return true;
     }
     for (const e of Array.from(root.querySelectorAll("*"))) {
-      if (e instanceof Element && e.shadowRoot && hasBridgeCheckbox(e.shadowRoot)) {
+      if (e.instanceOf(Element) && e.shadowRoot && hasBridgeCheckbox(e.shadowRoot)) {
         return true;
       }
     }
@@ -69,7 +69,7 @@ export function attachYoriNativeMarkedCheckboxBridge(
         this.disposers.push(() => rootEl.removeEventListener("input", onCommit, true));
 
         const visitForInputs = (node: Node): void => {
-          if (node instanceof HTMLInputElement && node.type === "checkbox") {
+          if (node.instanceOf(HTMLInputElement) && node.type === "checkbox") {
             if (!host.containerContainsNodeShadowAware(rootEl, node)) return;
             const tbl = host.resolveTableForCheckbox(node);
             const task = host.isNativePreviewTaskListCheckbox(node);
@@ -88,13 +88,13 @@ export function attachYoriNativeMarkedCheckboxBridge(
             node.addEventListener("click", onClickCapture, true);
             this.disposers.push(() => node.removeEventListener("click", onClickCapture, true));
           }
-          if (node instanceof Element) {
+          if (node.instanceOf(Element)) {
             for (const ch of Array.from(node.children)) visitForInputs(ch);
             const sr = node.shadowRoot;
             if (sr) {
               for (const ch of Array.from(sr.children)) visitForInputs(ch);
             }
-          } else if (node instanceof ShadowRoot) {
+          } else if (node.instanceOf(ShadowRoot)) {
             for (const ch of Array.from(node.children)) visitForInputs(ch);
           }
         };
@@ -159,8 +159,8 @@ export function createWorkspaceMarkedCheckboxPointerHandler(
       if (host.settings.toolbarMode === "rich") return;
       let hit: HTMLInputElement | null = null;
       try {
-        for (const el of document.elementsFromPoint(evt.clientX, evt.clientY)) {
-          if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        for (const el of activeDocument.elementsFromPoint(evt.clientX, evt.clientY)) {
+          if (el.instanceOf(HTMLInputElement) && el.type === "checkbox") {
             hit = el;
             break;
           }

@@ -1,3 +1,7 @@
+import { sanitizeHTMLToDom } from "obsidian";
+
+import { yoriDetachedEl } from "./yori-detached-dom";
+
 /**
  * 判断 YORI inner 是否应按「整块 HTML」直接塞进高级编辑根（而非按行走 markdownToInitialRichHtml）。
  */
@@ -23,8 +27,8 @@ export function yoriRichInnerLoadAsRawHtml(inner: string): boolean {
     break;
   }
 
-  const probe = document.createElement("div");
-  probe.innerHTML = normalized;
+  const probe = yoriDetachedEl("div");
+  probe.appendChild(sanitizeHTMLToDom(normalized));
   const blockTags = new Set([
     "P",
     "UL",

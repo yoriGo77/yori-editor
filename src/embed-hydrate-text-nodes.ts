@@ -6,6 +6,7 @@ import {
   ATTACHMENT_VIDEO_EXTENSIONS,
   YORI_RICH_INLINE_TAG_CLASS
 } from "./yori-constants";
+import { yoriDetachedEl } from "./yori-detached-dom";
 
 /** 文本节点内 `![[…]]` / 预览 `[[图]]` 水合所需回调（由插件通过 embedHydrateHost() 注入）。 */
 export interface EmbedHydrateInTextNodeHost {
@@ -38,7 +39,7 @@ export function hydratePreviewImageEmbeds(root: HTMLElement, pathHint: string, h
     return v && /(?<!\!)\[\[[^\]]+\]\]/.test(v) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
   };
   const run = (accept: (n: Node) => number, fn: (t: Text) => void): void => {
-    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
+    const w = activeDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
     const batch: Text[] = [];
     let n: Node | null;
     while ((n = w.nextNode())) batch.push(n as Text);
@@ -58,19 +59,19 @@ function replacePlainWikiImageEmbedsInTextNodeForPreview(
   const re = /(?<!\!)\[\[([^\[\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
-  const frag = document.createDocumentFragment();
+  const frag = createFragment();
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) {
-      frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      frag.appendChild(activeDocument.createTextNode(text.slice(last, m.index)));
     }
     const rawInner = m[1].trim();
     const pipeIdx = rawInner.indexOf("|");
     const pathPart = pipeIdx >= 0 ? rawInner.slice(0, pipeIdx).trim() : rawInner;
     const suffix = pipeIdx >= 0 ? rawInner.slice(pipeIdx + 1).trim() : "";
     if (!pathPart) {
-      frag.appendChild(document.createTextNode(m[0]));
+      frag.appendChild(activeDocument.createTextNode(m[0]));
       last = m.index + m[0].length;
       continue;
     }
@@ -79,7 +80,7 @@ function replacePlainWikiImageEmbedsInTextNodeForPreview(
     const dest = host.resolveVaultLinkDestForHydrate(linkPath, sourcePath);
     const ext = dest instanceof TFile ? dest.extension.toLowerCase() : "";
     if (dest instanceof TFile && ATTACHMENT_IMAGE_EXTENSIONS.has(ext)) {
-      const img = document.createElement("img");
+      const img = yoriDetachedEl("img");
       img.src = host.vaultResourcePath(dest);
       img.alt = dest.basename;
       if (widthPx != null) {
@@ -93,12 +94,12 @@ function replacePlainWikiImageEmbedsInTextNodeForPreview(
       img.style.display = "block";
       frag.appendChild(img);
     } else {
-      frag.appendChild(document.createTextNode(m[0]));
+      frag.appendChild(activeDocument.createTextNode(m[0]));
     }
     last = m.index + m[0].length;
   }
   if (last < text.length) {
-    frag.appendChild(document.createTextNode(text.slice(last)));
+    frag.appendChild(activeDocument.createTextNode(text.slice(last)));
   }
   textNode.parentNode?.replaceChild(frag, textNode);
 }
@@ -113,19 +114,19 @@ export function replaceImageEmbedsInTextNode(
   const re = /!\[\[([^\[\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
-  const frag = document.createDocumentFragment();
+  const frag = createFragment();
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) {
-      frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      frag.appendChild(activeDocument.createTextNode(text.slice(last, m.index)));
     }
     const rawInner = m[1].trim();
     const pipeIdx = rawInner.indexOf("|");
     const pathPart = pipeIdx >= 0 ? rawInner.slice(0, pipeIdx).trim() : rawInner;
     const suffix = pipeIdx >= 0 ? rawInner.slice(pipeIdx + 1).trim() : "";
     if (!pathPart) {
-      frag.appendChild(document.createTextNode(m[0]));
+      frag.appendChild(activeDocument.createTextNode(m[0]));
       last = m.index + m[0].length;
       continue;
     }
@@ -134,7 +135,7 @@ export function replaceImageEmbedsInTextNode(
     const dest = host.resolveVaultLinkDestForHydrate(linkPath, sourcePath);
     const ext = dest instanceof TFile ? dest.extension.toLowerCase() : "";
     if (dest instanceof TFile && ATTACHMENT_IMAGE_EXTENSIONS.has(ext)) {
-      const img = document.createElement("img");
+      const img = yoriDetachedEl("img");
       if (setDehydrateMarker) {
         img.setAttribute("data-yori-image-embed", rawInner);
       }
@@ -151,7 +152,7 @@ export function replaceImageEmbedsInTextNode(
       img.style.display = "block";
       frag.appendChild(host.wrapRichMediaBlock(host.wrapRichImageWithResizeHost(img)));
     } else if (dest instanceof TFile && ATTACHMENT_VIDEO_EXTENSIONS.has(ext)) {
-      const video = document.createElement("video");
+      const video = yoriDetachedEl("video");
       if (setDehydrateMarker) {
         video.setAttribute("data-yori-video-embed", rawInner);
       }
@@ -164,7 +165,7 @@ export function replaceImageEmbedsInTextNode(
       video.style.display = "block";
       frag.appendChild(host.wrapRichMediaBlock(video));
     } else if (dest instanceof TFile && ATTACHMENT_AUDIO_EXTENSIONS.has(ext)) {
-      const audio = document.createElement("audio");
+      const audio = yoriDetachedEl("audio");
       if (setDehydrateMarker) {
         audio.setAttribute("data-yori-audio-embed", rawInner);
       }
@@ -175,12 +176,12 @@ export function replaceImageEmbedsInTextNode(
       audio.style.display = "block";
       frag.appendChild(host.wrapRichMediaBlock(audio));
     } else if (dest instanceof TFile && ATTACHMENT_PDF_EXTENSIONS.has(ext)) {
-      const box = document.createElement("div");
+      const box = yoriDetachedEl("div");
       box.className = "yori-rich-pdf-embed";
       if (setDehydrateMarker) {
         box.setAttribute("data-yori-pdf-embed", rawInner);
       }
-      const iframe = document.createElement("iframe");
+      const iframe = yoriDetachedEl("iframe");
       iframe.src = host.vaultResourcePath(dest);
       iframe.title = dest.basename;
       iframe.setAttribute("loading", "lazy");
@@ -193,12 +194,12 @@ export function replaceImageEmbedsInTextNode(
       const gen = host.createRichGenericFileEmbed(dest, rawInner);
       frag.appendChild(host.wrapRichMediaBlock(gen));
     } else {
-      frag.appendChild(document.createTextNode(m[0]));
+      frag.appendChild(activeDocument.createTextNode(m[0]));
     }
     last = m.index + m[0].length;
   }
   if (last < text.length) {
-    frag.appendChild(document.createTextNode(text.slice(last)));
+    frag.appendChild(activeDocument.createTextNode(text.slice(last)));
   }
   textNode.parentNode?.replaceChild(frag, textNode);
 }
@@ -213,19 +214,19 @@ export function replaceWikilinksInTextNodeForHydrate(
   const re = /(?<!\!)\[\[([^\[\]]+)\]\]/g;
   if (!re.test(text)) return;
   re.lastIndex = 0;
-  const frag = document.createDocumentFragment();
+  const frag = createFragment();
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) {
-      frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      frag.appendChild(activeDocument.createTextNode(text.slice(last, m.index)));
     }
     const rawInner = m[1].trim();
     const pipeIdx = rawInner.indexOf("|");
     const pathPart = pipeIdx >= 0 ? rawInner.slice(0, pipeIdx).trim() : rawInner;
     const alias = pipeIdx >= 0 ? rawInner.slice(pipeIdx + 1).trim() : "";
     if (!pathPart) {
-      frag.appendChild(document.createTextNode(m[0]));
+      frag.appendChild(activeDocument.createTextNode(m[0]));
       last = m.index + m[0].length;
       continue;
     }
@@ -234,7 +235,7 @@ export function replaceWikilinksInTextNodeForHydrate(
     const destExt = dest instanceof TFile ? dest.extension.toLowerCase() : "";
     const widthPx = host.parseNumericEmbedWidthSuffix(alias);
     if (dest instanceof TFile && ATTACHMENT_IMAGE_EXTENSIONS.has(destExt)) {
-      const img = document.createElement("img");
+      const img = yoriDetachedEl("img");
       img.setAttribute("data-yori-image-embed", rawInner);
       img.src = host.vaultResourcePath(dest);
       img.alt = dest.basename;
@@ -257,7 +258,7 @@ export function replaceWikilinksInTextNodeForHydrate(
       (dest
         ? dest.basename.replace(/\.md$/i, "")
         : pathPart.split("/").pop()?.replace(/\.md$/i, "") ?? pathPart);
-    const a = document.createElement("a");
+    const a = yoriDetachedEl("a");
     a.className = "internal-link";
     a.setAttribute("data-yori-wikilink", rawInner);
     a.setAttribute("data-href", pathPart);
@@ -271,7 +272,7 @@ export function replaceWikilinksInTextNodeForHydrate(
     last = m.index + m[0].length;
   }
   if (last < text.length) {
-    frag.appendChild(document.createTextNode(text.slice(last)));
+    frag.appendChild(activeDocument.createTextNode(text.slice(last)));
   }
   textNode.parentNode?.replaceChild(frag, textNode);
 }
@@ -291,17 +292,17 @@ export function replaceRichInlineTagsInTextNode(textNode: Text): void {
   while ((m = re.exec(text)) !== null) matches.push(m);
   if (matches.length === 0) return;
 
-  const frag = document.createDocumentFragment();
+  const frag = createFragment();
   let last = 0;
   for (const ma of matches) {
     const idx = ma.index;
     const full = ma[0];
     const body = ma[1] ?? "";
-    if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+    if (idx > last) frag.appendChild(activeDocument.createTextNode(text.slice(last, idx)));
     if (!isValidRichInlineTagBody(body)) {
-      frag.appendChild(document.createTextNode(full));
+      frag.appendChild(activeDocument.createTextNode(full));
     } else {
-      const span = document.createElement("span");
+      const span = yoriDetachedEl("span");
       span.className = YORI_RICH_INLINE_TAG_CLASS;
       span.setAttribute("data-yori-tag-body", body);
       span.textContent = full;
@@ -309,7 +310,7 @@ export function replaceRichInlineTagsInTextNode(textNode: Text): void {
     }
     last = idx + full.length;
   }
-  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  if (last < text.length) frag.appendChild(activeDocument.createTextNode(text.slice(last)));
   textNode.parentNode?.replaceChild(frag, textNode);
 }
 
@@ -323,7 +324,7 @@ export function hydrateRichInlineTagsInRichEditor(root: HTMLElement): void {
     const v = node.nodeValue;
     return v && /#[^\s#]/.test(v) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
   };
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode });
+  const w = activeDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode });
   const batch: Text[] = [];
   let nn: Node | null;
   while ((nn = w.nextNode())) batch.push(nn as Text);
