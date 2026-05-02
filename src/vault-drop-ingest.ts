@@ -4,6 +4,7 @@
  */
 import type { App } from "obsidian";
 import { normalizePath, parseLinktext, TFile } from "obsidian";
+import { tryGetElectronRequire } from "./electron-require-bridge";
 import { snapshotRichDataTransferSync } from "./data-transfer-snapshot";
 
 export type VaultDropLinkResolver = (linkPath: string, sourcePath: string) => TFile | null;
@@ -49,10 +50,9 @@ function resolveDroppedOsFileToVaultFile(app: App, absPath: string): TFile | nul
 /** Electron：部分环境下 File 无 `.path`，需 webUtils.getPathForFile */
 function electronGpuPathForFile(file: File): string | undefined {
   try {
-    /* Obsidian 桌面端：require 来自 Electron 主进程注入，非 DOM globalThis */
-    // eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron require bridge, not DOM document
-    const req = (globalThis as unknown as { require?: (id: string) => { webUtils?: { getPathForFile?: (f: File) => string } } })
-      .require;
+    const req = tryGetElectronRequire() as
+      | ((id: string) => { webUtils?: { getPathForFile?: (f: File) => string } })
+      | undefined;
     const gpu = req?.("electron")?.webUtils?.getPathForFile;
     if (typeof gpu !== "function") return undefined;
     const p = gpu(file);
@@ -71,8 +71,7 @@ function resolveDroppedFileEntryToVaultFile(app: App, file: File): TFile | null 
 }
 
 function resolveFileUrlToVaultFile(app: App, urlStr: string): TFile | null {
-  /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron require bridge, not DOM document */
-  const req = (globalThis as unknown as { require?: (id: string) => { fileURLToPath: (s: string) => string } }).require;
+  const req = tryGetElectronRequire() as ((id: string) => { fileURLToPath: (s: string) => string }) | undefined;
   const ftp = req?.("url")?.fileURLToPath;
   if (typeof ftp !== "function") return null;
   try {

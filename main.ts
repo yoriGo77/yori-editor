@@ -96,6 +96,7 @@ import {
   ingestDataTransferVaultLinkPieces as ingestDataTransferVaultLinkPiecesFromDt,
   ingestVaultLinkPiecesFromSnapshot as ingestVaultLinkPiecesFromSnapshotCore
 } from "./src/vault-drop-ingest";
+import { tryGetElectronRequire } from "./src/electron-require-bridge";
 import { copyFileIntoVaultAsAttachment, markdownLinkForDroppedVaultFile } from "./src/vault-attachment-markdown";
 import { collectHtmlTablesDeep, containerContainsNodeShadowAware } from "./src/dom-shadow-helpers";
 import {
@@ -192,8 +193,6 @@ const YORI_PDF_EMBED_MAX_HEIGHT = "min(88vh, 960px)";
 const YORI_FONT_WEIGHT_BOLD = "700";
 const YORI_FONT_STYLE_ITALIC = "italic";
 const YORI_DISPLAY_BLOCK = "block";
-
-/* eslint-disable @typescript-eslint/no-deprecated -- Rich editor relies on execCommand, queryCommandValue, and caret helpers for contenteditable in Electron. */
 
 export default class YoriEditorPlugin extends Plugin {
   settings: YoriEditorSettings;
@@ -6026,9 +6025,9 @@ export default class YoriEditorPlugin extends Plugin {
       /* fallthrough */
     }
     try {
-      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron clipboard bridge */
-      const req = (globalThis as unknown as { require?: (id: string) => { clipboard?: { readText?: () => string } } })
-        .require;
+      const req = tryGetElectronRequire() as
+        | ((id: string) => { clipboard?: { readText?: () => string } })
+        | undefined;
       const text = req?.("electron")?.clipboard?.readText?.();
       if (typeof text !== "string") return;
       if (text.length > 0 && isBareHttpUrlPaste(text)) {
@@ -8092,8 +8091,7 @@ export default class YoriEditorPlugin extends Plugin {
     const u = url.trim();
     if (!/^https?:\/\//i.test(u)) return;
     try {
-      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron shell.openExternal bridge */
-      const req = (globalThis as unknown as { require?: (id: string) => unknown }).require;
+      const req = tryGetElectronRequire();
       if (typeof req === "function") {
         const electron = req("electron") as { shell?: { openExternal?: (x: string) => Promise<void> } } | undefined;
         const openExternal = electron?.shell?.openExternal;
@@ -8141,8 +8139,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   private async openVaultFileWithSystemDefault(file: TFile): Promise<boolean> {
     try {
-      /* eslint-disable-next-line obsidianmd/prefer-active-doc -- Electron shell.openPath bridge */
-      const anyReq = (globalThis as unknown as { require?: (id: string) => unknown }).require;
+      const anyReq = tryGetElectronRequire();
       if (typeof anyReq === "function") {
         const electron = anyReq("electron") as { shell?: { openPath?: (x: string) => Promise<string> } };
         const openPath = electron?.shell?.openPath;

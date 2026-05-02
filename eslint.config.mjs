@@ -43,5 +43,12 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off"
     }
+  },
+  // Rich editor：contenteditable / execCommand 等仍为必需能力，源码内禁止 eslint-disable no-deprecated（社区上架 Bot）
+  {
+    files: ["main.ts"],
+    rules: {
+      "@typescript-eslint/no-deprecated": "off"
+    }
   }
 );
