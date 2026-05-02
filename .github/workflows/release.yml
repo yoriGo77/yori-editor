@@ -27,9 +27,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Obsidian 社区上架自检：Release「标题」须与 manifest.json.version 完全一致（不要带 v 前缀）。
+      - name: Read manifest version for release title
+        id: manifest_version
+        run: echo "version=$(node -p "JSON.parse(require('fs').readFileSync('manifest.json','utf8')).version")" >> "$GITHUB_OUTPUT"
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.manifest_version.outputs.version }}
           files: |
             main.js
             manifest.json
