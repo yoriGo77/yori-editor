@@ -5351,6 +5351,226 @@ export default class YoriEditorPlugin extends Plugin {
     sel.addRange(range);
   }
 
+  /** 列表项除复选框外是否有可见正文（文本或嵌入式媒体）。 */
+  private richLiHasEditableBodyContent(li: HTMLLIElement): boolean {
+    const clone = li.cloneNode(true) as HTMLLIElement;
+    clone.querySelectorAll('input[type="checkbox"]').forEach((n) => n.remove());
+    const t = (clone.textContent ?? "").replace(/\u200b/g, "").trim();
+    if (t.length > 0) return true;
+    return !!clone.querySelector("img, video, audio, iframe, hr");
+  }
+
+  private richListLiIsVisuallyEmpty(li: HTMLLIElement): boolean {
+    return !this.richLiHasEditableBodyContent(li);
+  }
+
+  private richCaretAtLiVisualStart(li: HTMLLIElement, isTask: boolean, range: Range): boolean {
+    const r = activeDocument.createRange();
+    if (isTask) {
+      const cb = findTaskCheckboxOnDirectListItem(li);
+      if (cb) {
+        r.setStartAfter(cb);
+        r.collapse(true);
+      } else {
+        r.selectNodeContents(li);
+        r.collapse(true);
+      }
+    } else {
+      r.selectNodeContents(li);
+      r.collapse(true);
+    }
+    return range.compareBoundaryPoints(Range.START_TO_START, r) <= 0;
+  }
+
+  private richEnsureLiHasEditablePlaceholder(li: HTMLLIElement, isTask: boolean): void {
+    if (this.richLiHasEditableBodyContent(li)) return;
+    if (isTask) {
+      const cb = findTaskCheckboxOnDirectListItem(li);
+      const keep = new Set<Node>();
+      if (cb) keep.add(cb);
+      for (const n of Array.from(li.childNodes)) {
+        if (!keep.has(n)) n.remove();
+      }
+      if (!findTaskCheckboxOnDirectListItem(li)) {
+        const inp = yoriDetachedEl("input");
+        inp.type = "checkbox";
+        inp.className = "task-list-item-checkbox";
+        li.insertBefore(inp, li.firstChild);
+      }
+      li.appendChild(yoriDetachedEl("br"));
+      li.classList.add("task-list-item");
+    } else {
+      yoriFillWithSingleBr(li);
+    }
+  }
+
+  private richPlaceCaretAtStartOfLiBody(li: HTMLLIElement, isTask: boolean): void {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const r = activeDocument.createRange();
+    if (isTask) {
+      const cb = findTaskCheckboxOnDirectListItem(li);
+      if (cb) {
+        const next = cb.nextSibling;
+        if (next?.nodeType === Node.TEXT_NODE) r.setStart(next, 0);
+        else if (next) r.setStartBefore(next);
+        else r.setStartAfter(cb);
+      } else {
+        r.selectNodeContents(li);
+        r.collapse(true);
+      }
+    } else {
+      r.selectNodeContents(li);
+      r.collapse(true);
+    }
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    this.richEditorEl?.focus({ preventScroll: true });
+  }
+
+  /** 在空列表项上按 Enter：移除该项并在列表后插入普通段落，等价于「第二次回车退出列表」。 */
+  private richExitEmptyListItem(li: HTMLLIElement): void {
+    const list = li.parentElement;
+    if (!(list?.instanceOf(HTMLUListElement) || list?.instanceOf(HTMLOListElement))) return;
+    const parent = list.parentNode;
+    if (!parent) return;
+
+    const listNextSibling = list.nextSibling;
+    li.remove();
+
+    const p = yoriDetachedEl("p");
+    yoriFillWithSingleBr(p);
+
+    if (!list.querySelector(":scope > li")) {
+      list.remove();
+      parent.insertBefore(p, listNextSibling);
+    } else {
+      parent.insertBefore(p, list.nextSibling);
+    }
+
+    const sel = window.getSelection();
+    if (!sel) return;
+    const r = activeDocument.createRange();
+    r.selectNodeContents(p);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    this.richEditorEl?.focus({ preventScroll: true });
+  }
+
+  private richInsertEmptyListItemBefore(
+    li: HTMLLIElement,
+    parentList: HTMLUListElement | HTMLOListElement,
+    isTask: boolean
+  ): void {
+    const newLi = yoriDetachedEl("li");
+    if (isTask) {
+      newLi.classList.add("task-list-item");
+      const cb = yoriDetachedEl("input");
+      cb.type = "checkbox";
+      cb.className = "task-list-item-checkbox";
+      newLi.appendChild(cb);
+      newLi.appendChild(yoriDetachedEl("br"));
+    } else {
+      yoriFillWithSingleBr(newLi);
+    }
+    parentList.insertBefore(newLi, li);
+    this.richPlaceCaretAtStartOfLiBody(newLi, isTask);
+  }
+
+  /** 将光标后内容拆到新列表项（延续符号/编号/任务框）；光标落在行首时在当前项上方插入空项。 */
+  private richSplitListItemAtCaret(
+    li: HTMLLIElement,
+    caret: Range,
+    parentList: HTMLUListElement | HTMLOListElement,
+    isTask: boolean
+  ): void {
+    const rangeToEnd = activeDocument.createRange();
+    rangeToEnd.selectNodeContents(li);
+    rangeToEnd.setStart(caret.startContainer, caret.startOffset);
+    const frag = rangeToEnd.extractContents();
+
+    const newLi = yoriDetachedEl("li");
+    if (isTask) {
+      newLi.classList.add("task-list-item");
+      const cb = yoriDetachedEl("input");
+      cb.type = "checkbox";
+      cb.className = "task-list-item-checkbox";
+      newLi.appendChild(cb);
+    }
+
+    while (frag.firstChild) {
+      newLi.appendChild(frag.firstChild);
+    }
+
+    this.richEnsureLiHasEditablePlaceholder(li, isTask);
+    this.richEnsureLiHasEditablePlaceholder(newLi, isTask);
+
+    parentList.insertBefore(newLi, li.nextSibling);
+    this.richPlaceCaretAtStartOfLiBody(newLi, isTask);
+  }
+
+  /**
+   * 无序/有序/任务列表内 Enter：非空则拆成下一项；空项则退出列表；行首 Enter 插入上方空项。
+   * Shift+Enter 不拦截，保留浏览器软换行。
+   */
+  private tryHandleRichEnterInList(evt: KeyboardEvent): void {
+    if (!this.richEditorEl) return;
+    if (evt.key !== "Enter" || evt.defaultPrevented) return;
+    if (evt.shiftKey || evt.altKey || evt.ctrlKey || evt.metaKey) return;
+    if (evt.isComposing) return;
+
+    const sel = window.getSelection();
+    if (!sel?.rangeCount || !sel.isCollapsed) return;
+
+    const anchor = sel.anchorNode;
+    if (!anchor || !this.richEditorEl.contains(anchor)) return;
+
+    const embedHost = anchor.instanceOf(Element)
+      ? anchor.closest(`.${YORI_RICH_ATOMIC_EMBED_CLASS}, .yori-rich-generic-embed`)
+      : anchor.parentElement?.closest(`.${YORI_RICH_ATOMIC_EMBED_CLASS}, .yori-rich-generic-embed`);
+    if (embedHost && this.richEditorEl.contains(embedHost)) return;
+
+    const el = anchor.instanceOf(Element) ? anchor : anchor.parentElement;
+    const li = el?.closest("li");
+    if (!li?.instanceOf(HTMLLIElement) || !this.richEditorEl.contains(li)) return;
+
+    const parentList = li.parentElement;
+    if (
+      !(
+        parentList?.instanceOf(HTMLUListElement) ||
+        parentList?.instanceOf(HTMLOListElement)
+      )
+    )
+      return;
+
+    const isTask =
+      parentList.instanceOf(HTMLUListElement) && parentList.classList.contains("contains-task-list");
+
+    evt.preventDefault();
+
+    this.rememberRichStateForUndo();
+
+    const range = sel.getRangeAt(0);
+
+    if (this.richListLiIsVisuallyEmpty(li)) {
+      this.richExitEmptyListItem(li);
+    } else if (this.richCaretAtLiVisualStart(li, isTask, range)) {
+      this.richInsertEmptyListItemBefore(li, parentList, isTask);
+    } else {
+      this.richSplitListItemAtCaret(li, range.cloneRange(), parentList, isTask);
+    }
+
+    this.finalizeRichTaskListDomAfterMutation();
+    this.ensureRichTrailingParagraph();
+    this.markRichDirty();
+    this.scheduleRichAutoSave();
+    this.scheduleHydrateRichWikilinksOnInput();
+    this.scheduleRichSelectionVisualSync();
+    this.richEditorScrollCaretIntoViewIfNeeded();
+  }
+
   /**
    * 在「所有块级子元素」底边之下的区域点击（含外包层 padding）时，保证尾部有 p 并把光标落入其中。
    * 计算内容底边时忽略仅含 br 的占位尾段，避免其布局高度拉满导致永不该判定为「下方空白」。
@@ -7449,6 +7669,7 @@ export default class YoriEditorPlugin extends Plugin {
     });
     editor.addEventListener("dragstart", (e) => this.handleRichEditorEmbedDragStart(e), true);
     editor.spellcheck = true;
+    editor.addEventListener("keydown", (evt) => this.tryHandleRichEnterInList(evt), true);
     editor.addEventListener("beforeinput", (evt) => {
       if (this.richSuppressRichUndoCapture) return;
       const e = evt;

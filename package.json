@@ -1,6 +1,6 @@
 {
   "name": "yori-editor",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "功能更丰富的笔记编辑工具，支持自定义表格、字体颜色、对齐、字体高亮、段落边框等设置.",
   "author": "YoriGo",
   "main": "main.js",
