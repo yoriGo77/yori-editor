@@ -109,6 +109,7 @@ import {
   dehydrateRichEditorDomForSave as runRichDehydrateEditorDomForSave,
   findTaskCheckboxOnDirectListItem,
   normalizeRichTaskListDom,
+  stampRichTablesSyncIdsForSave,
   stripRichStrayParagraphCloseTagTextNodes,
   unwrapRedundantRichFontSpansInHolder,
   unwrapRichParagraphsWrappingDirectLists
@@ -226,6 +227,14 @@ export default class YoriEditorPlugin extends Plugin {
   private richResizeNeighborColIndex = -1;
   private richResizeNeighborStartSize = 0;
   private richResizeTableStartWidth = 0;
+  /** 列/行缩放时指针常移出 .yori-rich-editor（尤其最后一列向右），须在 document 上跟鼠标 */
+  private richResizeDocListenersAttached = false;
+  private readonly onRichResizeDocumentMouseMove = (evt: MouseEvent): void => {
+    this.handleRichTableDragMove(evt);
+  };
+  private readonly onRichResizeDocumentMouseUp = (evt: MouseEvent): void => {
+    this.handleRichTableDragEnd(evt);
+  };
   private richAlignCycleBtnEl: HTMLButtonElement | null = null;
   private richLineSpacingPanelEl: HTMLElement | null = null;
   private richLineSpacingMainBtnEl: HTMLButtonElement | null = null;
@@ -277,6 +286,9 @@ export default class YoriEditorPlugin extends Plugin {
    * LP 勾选写回会更新缓冲区并可能立刻再派发 change/input；不设锁时易形成递归或巨量同步栈，表现为卡顿/闪退。
    */
   private nativePreviewCheckboxWriteLock = false;
+  /** 桥接层同一勾选短时间重复派发 change/input，第二次写盘会引发 Obsidian「外部修改」提示 */
+  private nativeTableCheckboxSyncDedupeKey = "";
+  private nativeTableCheckboxSyncDedupeAt = 0;
   /** 元数据 resolve/resolved 后合并触发富文本内链 hydration */
   private richMetadataHydrateTimer: number | null = null;
   /** 阅读/编辑切换后合并同步子视图（同一 leaf 内切模式不会触发 active-leaf-change） */
@@ -522,7 +534,7 @@ export default class YoriEditorPlugin extends Plugin {
       if (!evt.shiftKey) {
         const tableBefore = c.closest("table");
         const rowCountBefore = tableBefore?.rows.length ?? 0;
-        this.addRichTableRow(c);
+        this.addRichTableRowRelative(c, "below");
         const tableAfter = c.closest("table");
         if (tableAfter && tableAfter.rows.length > rowCountBefore) {
           evt.preventDefault();
@@ -1403,11 +1415,9 @@ export default class YoriEditorPlugin extends Plugin {
     const { prefix, inner, suffix } = splitNoteAroundRichBlock(this.richBlockStart, this.richBlockEnd, body);
     if (inner === null) return false;
 
-    const viewTables = collectHtmlTablesDeep(view.containerEl).filter(
-      (t) => !this.richEditorEl || !containerContainsNodeShadowAware(this.richEditorEl, t)
-    );
-    const tableIndex = viewTables.indexOf(liveTable);
-
+    const viewTables = collectHtmlTablesDeep(view.containerEl)
+      .filter((t) => !this.richEditorEl || !containerContainsNodeShadowAware(this.richEditorEl, t))
+      .filter((t) => this.nativeLiveTableProbablyInteractable(t));
     const doc = new DOMParser().parseFromString(
       `<div id="yori-native-marked-cb-sync">${inner}</div>`,
       "text/html"
@@ -1416,7 +1426,7 @@ export default class YoriEditorPlugin extends Plugin {
     if (!root || root.querySelector("parsererror")) return false;
 
     const sourceTables = Array.from(root.querySelectorAll("table"));
-    const srcTable = this.pickYoriSourceTableForNativeSync(liveTable, sourceTables, tableIndex);
+    const srcTable = this.pickYoriSourceTableForNativeSync(liveTable, sourceTables, viewTables);
     if (!srcTable) return false;
 
     const srcCell = getOriginCellByGridPosition(srcTable, row, col);
@@ -1427,6 +1437,19 @@ export default class YoriEditorPlugin extends Plugin {
       .trim()
       .toLowerCase();
     if (colType !== "marked") return false;
+
+    const normPath = normalizePath(file.path);
+    const rr = liveTable.getBoundingClientRect();
+    const dedupeKey = `${normPath}\u241e${row}\u241e${col}\u241e${checked ? 1 : 0}\u241e${Math.round(rr.top)}\u241e${Math.round(rr.left)}`;
+    const dedupeNow = Date.now();
+    if (
+      dedupeKey === this.nativeTableCheckboxSyncDedupeKey &&
+      dedupeNow - this.nativeTableCheckboxSyncDedupeAt < 160
+    ) {
+      return true;
+    }
+    this.nativeTableCheckboxSyncDedupeKey = dedupeKey;
+    this.nativeTableCheckboxSyncDedupeAt = dedupeNow;
 
     if (this.nativePreviewCheckboxWriteLock) return false;
     this.nativePreviewCheckboxWriteLock = true;
@@ -1439,6 +1462,8 @@ export default class YoriEditorPlugin extends Plugin {
       } else {
         yoriFillCheckboxBrCell(srcCell, checked);
       }
+
+      stampRichTablesSyncIdsForSave(root);
 
       const nextInner = yoriTrustedSubtreeInnerHtml(root);
       const nextBody = `${prefix}${this.richBlockStart}\n${nextInner}\n${this.richBlockEnd}${suffix}`;
@@ -1504,18 +1529,62 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   /**
-   * 预览 `querySelectorAll("table")` 含块外 Markdown 表等时，下标与 YORI inner 内表不一一对应；
-   * 优先用「带标记列 + 同行列数」对齐源码中的表。
+   * LP/阅读预览可能在 DOM 中保留一份隐藏克隆树，`collectHtmlTablesDeep` 会得到双倍 `<table>`，
+   * 仅靠「表头签名 + 序」会与源码 inner 张数不一致并退回错误对齐 —— 先排除不可交互副本。
+   */
+  private nativeLiveTableProbablyInteractable(table: HTMLTableElement): boolean {
+    if (!table.isConnected) return false;
+    const win = table.ownerDocument.defaultView;
+    if (!win) return false;
+    let el: Element | null = table;
+    while (el) {
+      if (el.instanceOf(HTMLElement) && el.hidden) return false;
+      const st = win.getComputedStyle(el);
+      if (st.display === "none" || st.visibility === "hidden") return false;
+      el = el.parentElement;
+    }
+    try {
+      const r = table.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * 原生预览里区分多张结构相似的表格：首行文案 + 行列数（`data-yori-col-type` 常被净化，仍可用表头文本辅助对齐）。
+   */
+  private nativeMarkedTableStructureSignature(table: HTMLTableElement): string {
+    const r0 = table.rows[0];
+    const model = buildRichTableGrid(table);
+    const colCount = model.grid[0]?.length ?? 0;
+    const rowCount = table.rows.length;
+    const heads = r0
+      ? Array.from(r0.cells)
+          .map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim())
+          .join("\u241e")
+      : "";
+    return `${rowCount}x${colCount}:${heads}`;
+  }
+
+  /** 标记列表格数据区通常含 checkbox；用于从预览 DOM 中弱化「同尺寸但无标记控件」的普通表。 */
+  private liveTableLikelyYoriMarkedGrid(table: HTMLTableElement): boolean {
+    return !!table.querySelector("tr td input[type='checkbox'],tr td input[type=\"checkbox\"]");
+  }
+
+  /**
+   * `collectHtmlTablesDeep(view)` 含块外 Markdown 管道表时，全局下标与 YORI inner 内表不一一对应；
+   * 多张同尺寸标记表时不可退化为 `candidates[0]`，否则会误写第一张表并触发大面积错误勾选与外部合并提示。
    */
   private pickYoriSourceTableForNativeSync(
     liveTable: HTMLTableElement,
     sourceTables: HTMLTableElement[],
-    preferredIndex: number
+    liveTablesInViewOrder: HTMLTableElement[]
   ): HTMLTableElement | null {
-    const liveModel = buildRichTableGrid(liveTable);
     const liveRowCount = liveTable.rows.length;
-    const liveColCount = liveModel.grid[0]?.length ?? 0;
-    /** 首行可能是 th 或 td（新增行/粘贴/规范化后常见为 td）；与 getOriginCellByGridPosition(..., 0, col) 一致。 */
+    const liveColCount = buildRichTableGrid(liveTable).grid[0]?.length ?? 0;
+
+    /** 首行可能是 th 或 td（与 getOriginCellByGridPosition(..., 0, col) 一致）。 */
     const hasMarked = (t: HTMLTableElement): boolean => {
       const r0 = t.rows[0];
       if (!r0) return false;
@@ -1526,22 +1595,54 @@ export default class YoriEditorPlugin extends Plugin {
         return v === "marked";
       });
     };
-    const dimsMatch = (t: HTMLTableElement): boolean => {
+
+    const dimsMatchLive = (t: HTMLTableElement): boolean => {
       const m = buildRichTableGrid(t);
       return t.rows.length === liveRowCount && (m.grid[0]?.length ?? 0) === liveColCount;
     };
 
-    const preferred = preferredIndex >= 0 ? sourceTables[preferredIndex] : undefined;
-    if (preferred && hasMarked(preferred) && dimsMatch(preferred)) return preferred;
+    const idRaw = (liveTable.getAttribute("data-yori-sync-table-id") ?? "").trim();
+    if (idRaw !== "") {
+      const slot = Number.parseInt(idRaw, 10);
+      if (!Number.isNaN(slot) && slot >= 0 && slot < sourceTables.length) {
+        const byId = sourceTables[slot];
+        if (byId && hasMarked(byId) && dimsMatchLive(byId)) return byId;
+      }
+    }
 
-    const candidates = sourceTables.filter((t) => hasMarked(t) && dimsMatch(t));
-    if (candidates.length === 1) return candidates[0] ?? null;
-    if (candidates.length > 1 && preferred && candidates.includes(preferred)) return preferred;
+    const srcMarkedDims = sourceTables.filter((t) => hasMarked(t) && dimsMatchLive(t));
+    if (srcMarkedDims.length === 0) return null;
+    if (srcMarkedDims.length === 1) return srcMarkedDims[0] ?? null;
 
-    const markedOnly = sourceTables.filter(hasMarked);
-    if (markedOnly.length === 1) return markedOnly[0] ?? null;
+    const sig = this.nativeMarkedTableStructureSignature(liveTable);
+    const srcSameSig = srcMarkedDims.filter(
+      (t) => this.nativeMarkedTableStructureSignature(t) === sig
+    );
+    const liveSameSig = liveTablesInViewOrder.filter(
+      (t) => dimsMatchLive(t) && this.nativeMarkedTableStructureSignature(t) === sig
+    );
+    const idxSig = liveSameSig.indexOf(liveTable);
+    if (
+      idxSig >= 0 &&
+      srcSameSig.length === liveSameSig.length &&
+      idxSig < srcSameSig.length
+    ) {
+      return srcSameSig[idxSig] ?? null;
+    }
 
-    return candidates[0] ?? markedOnly[0] ?? null;
+    const liveCheckboxTier = liveTablesInViewOrder.filter(
+      (t) => dimsMatchLive(t) && this.liveTableLikelyYoriMarkedGrid(t)
+    );
+    const idxCb = liveCheckboxTier.indexOf(liveTable);
+    if (
+      idxCb >= 0 &&
+      srcMarkedDims.length === liveCheckboxTier.length &&
+      idxCb < srcMarkedDims.length
+    ) {
+      return srcMarkedDims[idxCb] ?? null;
+    }
+
+    return null;
   }
 
   private rememberLastTextColor(hex: string): void {
@@ -3335,6 +3436,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.ensureRichTrailingParagraph();
     this.markRichDirty();
     this.scheduleRichAutoSave();
+    this.scheduleRichSelectionVisualSync();
   }
 
   /** 外链 <a> 内插入时补水合会被 commonReject 跳过（closest 到非 internal-link 的 a） */
@@ -5675,7 +5777,7 @@ export default class YoriEditorPlugin extends Plugin {
     else target.removeAttribute("align");
   }
 
-  private addRichTableRow(targetCell?: HTMLTableCellElement): void {
+  private addRichTableRowRelative(targetCell: HTMLTableCellElement | undefined, where: "above" | "below"): void {
     if (!this.richEditorEl) return;
     const cell = targetCell ?? this.getCurrentRichTableCell();
     if (!cell) {
@@ -5702,7 +5804,11 @@ export default class YoriEditorPlugin extends Plugin {
       this.copyRichTableNewCellFormatFromReference(sourceCell, nextCell);
       newRow.appendChild(nextCell);
     });
-    row.insertAdjacentElement("afterend", newRow);
+    if (where === "below") {
+      row.insertAdjacentElement("afterend", newRow);
+    } else {
+      row.insertAdjacentElement("beforebegin", newRow);
+    }
     if (!body?.contains(newRow)) {
       table.appendChild(newRow);
     }
@@ -5737,7 +5843,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.scheduleRichAutoSave();
   }
 
-  private addRichTableColumn(targetCell?: HTMLTableCellElement): void {
+  private addRichTableColumnRelative(targetCell: HTMLTableCellElement | undefined, side: "left" | "right"): void {
     const cell = targetCell ?? this.getCurrentRichTableCell();
     if (!cell) {
       new Notice(richNoticeStrings(this.uiLang()).cursorInCell);
@@ -5747,17 +5853,32 @@ export default class YoriEditorPlugin extends Plugin {
     if (!table) return;
     const index = cell.cellIndex;
     Array.from(table.rows).forEach((row) => {
-      const refCell = row.cells[index + 1] ?? null;
       const source = row.cells[index];
-      const tag = source?.tagName === "TH" ? "th" : "td";
+      if (!source) return;
+      const tag = source.tagName === "TH" ? "th" : "td";
       const newCell = yoriDetachedEl(tag);
       newCell.empty();
       if (tag === "th") newCell.setText("标题");
       else newCell.createEl("br");
-      row.insertBefore(newCell, refCell);
+      this.copyRichTableNewCellFormatFromReference(source, newCell);
+      if (side === "left") {
+        row.insertBefore(newCell, source);
+      } else {
+        const refRight = row.cells[index + 1] ?? null;
+        if (refRight) row.insertBefore(newCell, refRight);
+        else row.appendChild(newCell);
+      }
     });
     this.applyRichTableColumnTypes(table);
     this.syncRichTableLayoutAfterStructureChange(table);
+    const focusIdx = side === "left" ? index : index + 1;
+    const focusRow = cell.parentElement as HTMLTableRowElement | null;
+    const focusCell =
+      focusRow && focusIdx < focusRow.cells.length ? focusRow.cells[focusIdx] : null;
+    if (focusCell && this.richEditorEl) {
+      focusRichTableCell(this.richEditorEl, focusCell, "start");
+      this.scheduleRichSelectionVisualSync();
+    }
     this.markRichDirty();
     this.scheduleRichAutoSave();
   }
@@ -6017,6 +6138,7 @@ export default class YoriEditorPlugin extends Plugin {
     try {
       if (activeDocument.execCommand("paste")) {
         this.scheduleRichEditorHydratePasses();
+        this.scheduleRichSelectionVisualSync();
         this.markRichDirty();
         this.scheduleRichAutoSave();
         return;
@@ -6037,6 +6159,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.rememberRichStateForUndo();
       activeDocument.execCommand("insertText", false, text);
       this.scheduleRichEditorHydratePasses();
+      this.scheduleRichSelectionVisualSync();
       this.markRichDirty();
       this.scheduleRichAutoSave();
     } catch {
@@ -6574,9 +6697,11 @@ export default class YoriEditorPlugin extends Plugin {
     if (showMergeCells || showSplitCell) {
       addDivider();
     }
-    addItem(tm.addRow, () => this.addRichTableRow(cell));
+    addItem(tm.insertRowAbove, () => this.addRichTableRowRelative(cell, "above"));
+    addItem(tm.insertRowBelow, () => this.addRichTableRowRelative(cell, "below"));
     addItem(tm.deleteRow, () => this.removeRichTableRow(cell), true);
-    addItem(tm.addColumn, () => this.addRichTableColumn(cell));
+    addItem(tm.insertColumnLeft, () => this.addRichTableColumnRelative(cell, "left"));
+    addItem(tm.insertColumnRight, () => this.addRichTableColumnRelative(cell, "right"));
     addItem(tm.deleteColumn, () => this.removeRichTableColumn(cell), true);
     addDivider();
     if (showConvertToNumbered) {
@@ -7155,6 +7280,20 @@ export default class YoriEditorPlugin extends Plugin {
     });
   }
 
+  private attachRichResizeDocumentListeners(): void {
+    if (this.richResizeDocListenersAttached) return;
+    activeDocument.addEventListener("mousemove", this.onRichResizeDocumentMouseMove, true);
+    activeDocument.addEventListener("mouseup", this.onRichResizeDocumentMouseUp, true);
+    this.richResizeDocListenersAttached = true;
+  }
+
+  private detachRichResizeDocumentListeners(): void {
+    if (!this.richResizeDocListenersAttached) return;
+    activeDocument.removeEventListener("mousemove", this.onRichResizeDocumentMouseMove, true);
+    activeDocument.removeEventListener("mouseup", this.onRichResizeDocumentMouseUp, true);
+    this.richResizeDocListenersAttached = false;
+  }
+
   private handleRichTableDragStart(evt: MouseEvent): void {
     if (!this.richEditorEl || evt.button !== 0) return;
     const cell = getClosestRichTableCellFromTarget(evt.target);
@@ -7173,7 +7312,6 @@ export default class YoriEditorPlugin extends Plugin {
       if (resizeHit === "col") {
         const table = this.getCurrentRichTable(cell);
         const colIndex = table ? this.resolveRichTableColumnIndex(table, cell) : -1;
-        const neighborIndex = table && colIndex >= 0 && getOriginCellByGridPosition(table, 0, colIndex + 1) ? colIndex + 1 : -1;
         if (table) {
           this.lockRichTableForColumnResize(table);
           this.richResizeTableStartWidth = Math.round(table.getBoundingClientRect().width);
@@ -7181,10 +7319,10 @@ export default class YoriEditorPlugin extends Plugin {
           this.richResizeTableStartWidth = 0;
         }
         this.richResizeColIndex = colIndex;
-        this.richResizeNeighborColIndex = neighborIndex;
+        /** 列宽：整张表随拖拽列增减宽度，右侧列保持已锁定像素宽一并外移（不做邻列零和压缩）。 */
+        this.richResizeNeighborColIndex = -1;
         this.richResizeStartSize = table && colIndex >= 0 ? this.getRichColumnCurrentWidthByIndex(table, colIndex) : 120;
-        this.richResizeNeighborStartSize =
-          table && neighborIndex >= 0 ? this.getRichColumnCurrentWidthByIndex(table, neighborIndex) : 0;
+        this.richResizeNeighborStartSize = 0;
       } else {
         this.richResizeStartSize = this.getRichRowCurrentHeight(cell);
         this.richResizeColIndex = -1;
@@ -7192,6 +7330,7 @@ export default class YoriEditorPlugin extends Plugin {
         this.richResizeNeighborStartSize = 0;
       }
       this.richEditorEl.addClass("is-table-resizing");
+      this.attachRichResizeDocumentListeners();
       evt.preventDefault();
       return;
     }
@@ -7207,29 +7346,16 @@ export default class YoriEditorPlugin extends Plugin {
     if (!this.richEditorEl) return;
 
     if (this.richResizeMode && this.richResizeCell) {
-      if ((evt.buttons & 1) === 0) return;
+      /* 结束缩放只靠 mouseup；勿在此处依赖 evt.buttons（跨编辑器边界/pointer capture 边界时偶发为 0 会误判卡死）。 */
       evt.preventDefault();
       if (this.richResizeMode === "col") {
         const table = this.getCurrentRichTable(this.richResizeCell);
         if (!table || this.richResizeColIndex < 0) return;
         const delta = evt.clientX - this.richResizeStartX;
         const minWidth = 60;
-        if (this.richResizeNeighborColIndex >= 0) {
-          const deltaMin = minWidth - this.richResizeStartSize;
-          const deltaMax = this.richResizeNeighborStartSize - minWidth;
-          const applied = Math.max(deltaMin, Math.min(delta, deltaMax));
-          const nextCurrent = this.richResizeStartSize + applied;
-          const nextNeighbor = this.richResizeNeighborStartSize - applied;
-          this.applyRichColumnWidthByIndex(table, this.richResizeColIndex, nextCurrent);
-          this.applyRichColumnWidthByIndex(table, this.richResizeNeighborColIndex, nextNeighbor);
-        } else {
-          const next = Math.max(minWidth, this.richResizeStartSize + delta);
-          this.applyRichColumnWidthByIndex(table, this.richResizeColIndex, next);
-          const widthDelta = next - this.richResizeStartSize;
-          const minTableWidth = this.getRichTableColumnCount(table) * minWidth;
-          const nextTableWidth = Math.max(minTableWidth, this.richResizeTableStartWidth + widthDelta);
-          table.style.width = `${nextTableWidth}px`;
-        }
+        const next = Math.max(minWidth, this.richResizeStartSize + delta);
+        this.applyRichColumnWidthByIndex(table, this.richResizeColIndex, next);
+        this.syncRichTableWidthToLockedColumnSum(table, minWidth);
       } else {
         const delta = evt.clientY - this.richResizeStartY;
         const next = Math.max(28, this.richResizeStartSize + delta);
@@ -7289,6 +7415,7 @@ export default class YoriEditorPlugin extends Plugin {
   private handleRichTableDragEnd(evt?: MouseEvent): void {
     if (!this.richEditorEl) return;
     if (this.richResizeMode && this.richResizeCell) {
+      this.detachRichResizeDocumentListeners();
       this.richResizeMode = null;
       this.richResizeCell = null;
       this.richResizeColIndex = -1;
@@ -7415,6 +7542,24 @@ export default class YoriEditorPlugin extends Plugin {
       target.style.width = `${width}px`;
       target.style.minWidth = `${width}px`;
     }
+  }
+
+  /** 表格外宽与各列锁定像素宽之和保持一致；避免 width 小于列宽和时固定布局把差额分摊到所有列（表现为两边一起缩）。 */
+  private syncRichTableWidthToLockedColumnSum(table: HTMLTableElement, minColWidth: number): void {
+    const colCount = this.getRichTableColumnCount(table);
+    if (colCount <= 0) return;
+    const cols = this.ensureRichTableColgroup(table, colCount);
+    let sum = 0;
+    for (let c = 0; c < colCount; c++) {
+      const colEl = cols[c];
+      let w = colEl ? Number.parseFloat(colEl.style.width || "") : NaN;
+      if (!Number.isFinite(w) || w <= 0) {
+        w = this.getRichColumnCurrentWidthByIndex(table, c);
+      }
+      sum += w;
+    }
+    const minSum = colCount * minColWidth;
+    table.style.width = `${Math.max(minSum, Math.round(sum))}px`;
   }
 
   private syncRichTableLayoutAfterStructureChange(table: HTMLTableElement): void {
@@ -7712,6 +7857,8 @@ export default class YoriEditorPlugin extends Plugin {
       this.markRichDirty();
       this.scheduleRichAutoSave();
       this.scheduleHydrateRichWikilinksOnInput();
+      /* paste 不触发 keyup；须同步对齐索引与工具栏，否则会沿用粘贴前的 richAlignCurrentIndex 导致对齐失效 */
+      this.scheduleRichSelectionVisualSync();
     });
     const onRichCheckboxEdited = (): void => {
       this.markRichDirty();
@@ -7788,7 +7935,10 @@ export default class YoriEditorPlugin extends Plugin {
     );
     editor.addEventListener("mousemove", (evt) => this.handleRichTableDragMove(evt));
     editor.addEventListener("mouseup", (e) => this.handleRichTableDragEnd(e));
-    editor.addEventListener("mouseleave", (e) => this.handleRichTableDragEnd(e));
+    editor.addEventListener("mouseleave", (e) => {
+      if (this.richResizeMode) return;
+      this.handleRichTableDragEnd(e);
+    });
     editor.addEventListener("blur", () => {
       this.scheduleRichAutoSave(0);
       this.hydrateRichWikilinksInEditor();
@@ -7858,6 +8008,7 @@ export default class YoriEditorPlugin extends Plugin {
   }
 
   private unmountRichEditor(): void {
+    this.detachRichResizeDocumentListeners();
     this.cleanupRichImageResizeListeners();
     window.removeEventListener("dragend", this.richGlobalDragEndCapture, true);
     this.richInternalDragMediaParagraph = null;

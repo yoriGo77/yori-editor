@@ -517,6 +517,16 @@ export function syncRichCheckboxCheckedAttributeForSave(root: HTMLElement): void
   }
 }
 
+/**
+ * 原生预览下多张标记列表格对齐：按文档序为每张 table 写入稳定序号。
+ * Obsidian 预览通常会保留 table 上的 data-*（th 上 data-yori-col-type 反而常被净化）。
+ */
+export function stampRichTablesSyncIdsForSave(root: HTMLElement): void {
+  Array.from(root.querySelectorAll("table")).forEach((t, i) => {
+    t.setAttribute("data-yori-sync-table-id", String(i));
+  });
+}
+
 /** 富文本根 DOM 克隆保存前的完整脱水流水线（不含写盘）。 */
 export function dehydrateRichEditorDomForSave(root: HTMLElement): void {
   cleanupRichFontSpanSoupInTree(root);
@@ -534,4 +544,5 @@ export function dehydrateRichEditorDomForSave(root: HTMLElement): void {
   unwrapRichTaskListLiBodiesForSave(root);
   normalizeRichTaskListDom(root, { skipLiBodyWrap: true });
   syncRichCheckboxCheckedAttributeForSave(root);
+  stampRichTablesSyncIdsForSave(root);
 }

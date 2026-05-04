@@ -68,7 +68,7 @@
   max-height: min(72vh, 720px);
   height: auto;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 0 0 12px;
   scroll-padding-bottom: clamp(32px, 6dvh, 64px);
   cursor: text;
@@ -407,8 +407,10 @@
 .yori-rich-editor table {
   display: table;
   width: 100%;
-  min-width: 100%;
-  max-width: 100%;
+  /* 勿设 min-width:100%：会与拖拽设置的像素 table.width 冲突，列宽之和小于编辑区时表无法继续变窄，固定布局下会整表挤压各列 */
+  min-width: 0;
+  /* 勿设 max-width:100%：最后一列右边缘外扩时 table 需可宽于编辑栏，否则外向拖拽无效；横溢出由 .yori-rich-editor-wrap overflow-x:auto 承载 */
+  max-width: none;
   table-layout: fixed;
   border-collapse: collapse;
   margin: 10px 0;
