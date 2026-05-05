@@ -1,5 +1,16 @@
 # 更新日志
 
+## [0.5.1] - 2026-05-05
+
+### 修复
+
+- **阅读模式空白**：在「高级编辑」工具栏模式下打开任意 markdown 笔记并切换为阅读模式时，整张页面一片空白。原因是 Obsidian 1.4+ 的阅读模式可滚动外壳是 `.markdown-reading-view`，`.markdown-preview-view` 是其子节点；旧逻辑只把 preview-view 当作「阅读层」放行显示，外壳被 `display:none`，子节点跟着被隐藏。现把 reading-view 也判定为阅读层。
+- **切到非 Markdown 视图后高级编辑残留**：`mountToolbar` 在活动叶子不是 Markdown 或拿不到 `.view-content` 时直接返回，未清理上一张笔记的 rich 编辑器外壳与 `display:none` 抑制。现统一调用 `unmountRichEditor()` 收尾。
+- **工具栏面板的全局 click 监听泄漏**：5 处 `activeDocument.addEventListener("click", …, true)` 使用匿名函数且从不解绑，每次工具栏重建（叶子切换 / 布局变化）都多挂一层；插件卸载后仍残留至重启 Obsidian。改为统一注册/清理，`mountToolbar` 顶端清旧再加新，`onunload` 一并清理。
+- **快速切笔记时勾选状态错位**：`scheduleRichEditorHydratePasses` 排队的 rAF / setTimeout 未跟踪也无法取消，闭包持有的 checkbox `snap` 可能被应用到下一篇笔记。新增 timer/raf 跟踪与取消，`run` 回调里校验当前编辑器与文件路径仍是调度时刻的那一份；`unmountRichEditor` 也会取消。
+- **load / save 异步竞态**：快速切笔记或在异步加载完成前重挂时，可能把 A 笔记内容灌进 B 笔记的可编辑区，或把旧 inner 写到错文件。新增 `richEditorMountGeneration` 代次计数，`mountRichEditor` 自增；`loadRichEditorFromNote` / `saveRichEditorToNote` / `persistConsolidatedRichBodyToDisk` 在每个 `await` 后校验代次和编辑器实例，已失效则放弃。
+- **块边界正则鲁棒性**：`splitNoteAroundRichBlock` 与 `getYoriRichInnerContentStartInBody` 的行分隔符由 `\r?\n` 扩展为 `(?:\r\n|\r|\n)`，兼容旧 Mac 风格 `\r-only` 换行的笔记。
+
 ## [0.5.0] - 2026-05-01
 
 ### 新增

@@ -19,7 +19,8 @@ export function splitLeadingYamlFrontmatter(text: string): { frontmatter: string
   return { frontmatter: text.slice(0, bodyStart), body: text.slice(bodyStart) };
 }
 
-/** 正文内 YORI 块与块外 Markdown 分段（不含 frontmatter；frontmatter 须先剥掉） */
+/** 正文内 YORI 块与块外 Markdown 分段（不含 frontmatter；frontmatter 须先剥掉）。
+ *  行分隔符兼容 `\n` / `\r\n` / 旧 Mac 风格的 `\r` 单字符。 */
 export function splitNoteAroundRichBlock(
   richBlockStart: string,
   richBlockEnd: string,
@@ -27,7 +28,7 @@ export function splitNoteAroundRichBlock(
 ): { prefix: string; inner: string | null; suffix: string } {
   const escapedStart = escapeForRegex(richBlockStart);
   const escapedEnd = escapeForRegex(richBlockEnd);
-  const re = new RegExp(`${escapedStart}\\r?\\n([\\s\\S]*?)\\r?\\n${escapedEnd}`);
+  const re = new RegExp(`${escapedStart}(?:\\r\\n|\\r|\\n)([\\s\\S]*?)(?:\\r\\n|\\r|\\n)${escapedEnd}`);
   const m = re.exec(text);
   if (!m) return { prefix: text, inner: null, suffix: "" };
   const idx = m.index ?? 0;
@@ -46,7 +47,8 @@ export function composeNoteWithFrontmatterAndRichBlock(
   return `${frontmatter}${gap}${block}`;
 }
 
-/** YORI 块内富 HTML 正文在 body 中的起始下标（不含块界注释行本身）。 */
+/** YORI 块内富 HTML 正文在 body 中的起始下标（不含块界注释行本身）。
+ *  行分隔符兼容 `\n` / `\r\n` / 旧 Mac 风格的 `\r` 单字符。 */
 export function getYoriRichInnerContentStartInBody(
   richBlockStart: string,
   richBlockEnd: string,
@@ -54,11 +56,11 @@ export function getYoriRichInnerContentStartInBody(
 ): number | null {
   const escapedStart = escapeForRegex(richBlockStart);
   const escapedEnd = escapeForRegex(richBlockEnd);
-  const re = new RegExp(`${escapedStart}\\r?\\n([\\s\\S]*?)\\r?\\n${escapedEnd}`);
+  const re = new RegExp(`${escapedStart}(?:\\r\\n|\\r|\\n)([\\s\\S]*?)(?:\\r\\n|\\r|\\n)${escapedEnd}`);
   const m = re.exec(body);
   if (!m || m.index === undefined) return null;
   let cursor = m.index + richBlockStart.length;
-  if (body[cursor] === "\r") cursor++;
-  if (body[cursor] === "\n") cursor++;
+  if (body[cursor] === "\r" && body[cursor + 1] === "\n") cursor += 2;
+  else if (body[cursor] === "\r" || body[cursor] === "\n") cursor += 1;
   return cursor;
 }

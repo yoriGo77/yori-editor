@@ -199,6 +199,14 @@ export default class YoriEditorPlugin extends Plugin {
   settings: YoriEditorSettings;
   private toolbarEl: HTMLElement | null = null;
   private toolbarLayoutObserver: ResizeObserver | null = null;
+  /** 工具栏面板「点击空白处关闭」用的 document 捕获监听；mountToolbar 重建或卸载插件时统一清理。 */
+  private toolbarPanelCloseHandlers: Array<{ doc: Document; handler: (e: Event) => void }> = [];
+  /** scheduleRichEditorHydratePasses 排队的 setTimeout id，切笔记 / unmount 时统一 clear 防越界回调。 */
+  private richHydratePassTimers: number[] = [];
+  /** scheduleRichEditorHydratePasses 排队的 requestAnimationFrame id，统一 cancel。 */
+  private richHydratePassRafs: number[] = [];
+  /** 高级编辑实例代次：每次 mount 自增；异步任务若发现已变化则放弃，避免错文件回写或错笔记灌版。 */
+  private richEditorMountGeneration = 0;
   private richEditorWrapEl: HTMLElement | null = null;
   private richEditorEl: HTMLDivElement | null = null;
   private richTableContextMenuEl: HTMLElement | null = null;
@@ -877,9 +885,26 @@ export default class YoriEditorPlugin extends Plugin {
     bumpRichBoundaryDecorationsWorkspace(this.app, this as unknown as Pick<YoriCmChromeHost, "richBoundaryDecoGeneration">);
   }
 
+  private clearToolbarPanelCloseHandlers(): void {
+    for (const { doc, handler } of this.toolbarPanelCloseHandlers) {
+      try {
+        doc.removeEventListener("click", handler, true);
+      } catch {
+        /* ignore */
+      }
+    }
+    this.toolbarPanelCloseHandlers = [];
+  }
+
+  private registerToolbarPanelCloseHandler(doc: Document, handler: (e: Event) => void): void {
+    doc.addEventListener("click", handler, true);
+    this.toolbarPanelCloseHandlers.push({ doc, handler });
+  }
+
   private mountToolbar(): void {
     this.toolbarLayoutObserver?.disconnect();
     this.toolbarLayoutObserver = null;
+    this.clearToolbarPanelCloseHandlers();
     this.toolbarEl?.remove();
     this.toolbarEl = null;
     this.richAlignCycleBtnEl = null;
@@ -893,9 +918,15 @@ export default class YoriEditorPlugin extends Plugin {
     this.fontFamilyPresetPanelEl = null;
     this.fontSizePresetPanelEl = null;
     const view = this.getActiveMarkdownView();
-    if (!view) return;
+    if (!view) {
+      this.unmountRichEditor();
+      return;
+    }
     const container = view.containerEl.querySelector(".view-content");
-    if (!container) return;
+    if (!container) {
+      this.unmountRichEditor();
+      return;
+    }
 
     const toolbar = createDiv({
       cls: "yori-editor-toolbar is-top"
@@ -1756,15 +1787,11 @@ export default class YoriEditorPlugin extends Plugin {
       panel.toggleClass("is-open", nextOpen);
     });
 
-    activeDocument.addEventListener(
-      "click",
-      (evt) => {
-        if (!wrap.contains(evt.target as Node)) {
-          panel.removeClass("is-open");
-        }
-      },
-      true
-    );
+    this.registerToolbarPanelCloseHandler(activeDocument, (evt) => {
+      if (!wrap.contains(evt.target as Node)) {
+        panel.removeClass("is-open");
+      }
+    });
   }
 
   private createTextColorSplitButton(container: HTMLElement, richMode: boolean): void {
@@ -1853,15 +1880,11 @@ export default class YoriEditorPlugin extends Plugin {
       panel.toggleClass("is-open", nextOpen);
     });
 
-    activeDocument.addEventListener(
-      "click",
-      (evt) => {
-        if (!wrap.contains(evt.target as Node)) {
-          panel.removeClass("is-open");
-        }
-      },
-      true
-    );
+    this.registerToolbarPanelCloseHandler(activeDocument, (evt) => {
+      if (!wrap.contains(evt.target as Node)) {
+        panel.removeClass("is-open");
+      }
+    });
   }
 
   private createFontSelectControl(container: HTMLElement, richMode: boolean, kind: "family" | "size"): void {
@@ -1926,15 +1949,11 @@ export default class YoriEditorPlugin extends Plugin {
       if (next) this.refreshFontPresetPanelActiveStates();
     });
 
-    activeDocument.addEventListener(
-      "click",
-      (evt) => {
-        if (!wrap.contains(evt.target as Node)) {
-          panel.removeClass("is-open");
-        }
-      },
-      true
-    );
+    this.registerToolbarPanelCloseHandler(activeDocument, (evt) => {
+      if (!wrap.contains(evt.target as Node)) {
+        panel.removeClass("is-open");
+      }
+    });
   }
 
   private refreshFontToolbarLabelsIfMounted(): void {
@@ -2496,13 +2515,9 @@ export default class YoriEditorPlugin extends Plugin {
       if (next) this.refreshRichLineSpacingPanelIfOpen();
     });
 
-    activeDocument.addEventListener(
-      "click",
-      (evt) => {
-        if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
-      },
-      true
-    );
+    this.registerToolbarPanelCloseHandler(activeDocument, (evt) => {
+      if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
+    });
 
     this.syncRichLineSpacingToolbarState();
   }
@@ -2567,13 +2582,9 @@ export default class YoriEditorPlugin extends Plugin {
       if (nextOpen) this.refreshRichBorderPanelIfOpen();
     });
 
-    activeDocument.addEventListener(
-      "click",
-      (evt) => {
-        if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
-      },
-      true
-    );
+    this.registerToolbarPanelCloseHandler(activeDocument, (evt) => {
+      if (!wrap.contains(evt.target as Node)) panel.removeClass("is-open");
+    });
   }
 
   private createRichTableSplitButton(container: HTMLElement): void {
@@ -7830,6 +7841,7 @@ export default class YoriEditorPlugin extends Plugin {
 
   private mountRichEditor(view: MarkdownView, container: Element): void {
     this.unmountRichEditor();
+    this.richEditorMountGeneration += 1;
     const host = createDiv({ cls: "yori-rich-editor-wrap" });
     host.addEventListener("dragover", (e) => this.handleRichEditorDragOver(e), true);
     host.addEventListener("drop", (e) => this.handleRichEditorDrop(e), true);
@@ -8043,6 +8055,7 @@ export default class YoriEditorPlugin extends Plugin {
       window.clearTimeout(this.richLayoutHydrateTimer);
       this.richLayoutHydrateTimer = null;
     }
+    this.cancelRichEditorHydratePasses();
     if (this.richInputHydrateTimer != null) {
       window.clearTimeout(this.richInputHydrateTimer);
       this.richInputHydrateTimer = null;
@@ -8308,26 +8321,46 @@ export default class YoriEditorPlugin extends Plugin {
     return false;
   }
 
+  private cancelRichEditorHydratePasses(): void {
+    for (const id of this.richHydratePassTimers) {
+      window.clearTimeout(id);
+    }
+    this.richHydratePassTimers = [];
+    for (const id of this.richHydratePassRafs) {
+      cancelAnimationFrame(id);
+    }
+    this.richHydratePassRafs = [];
+  }
+
   /** 打开笔记后多帧补水合，减轻 metadata / 主题变量未就绪时链接样式与命中滞后 */
   private scheduleRichEditorHydratePasses(): void {
+    this.cancelRichEditorHydratePasses();
     const snap =
       this.richCheckboxFlagsFromLastNoteLoad && this.richCheckboxFlagsFromLastNoteLoad.length > 0
         ? [...this.richCheckboxFlagsFromLastNoteLoad]
         : null;
+    /** 调度时刻锁定的编辑器与文件路径；回调若发现已切换则放弃，避免把上一笔记状态写进新编辑器 */
+    const editorAtSchedule = this.richEditorEl;
+    const fileAtSchedule = this.richHostFilePath;
     const run = (): void => {
+      if (!editorAtSchedule) return;
+      if (this.richEditorEl !== editorAtSchedule) return;
+      if (this.richHostFilePath !== fileAtSchedule) return;
       this.hydrateRichWikilinksInEditor();
       if (snap && this.richEditorEl) {
         applyRichCheckboxCheckedFlagsToEditorInTreeOrder(this.richEditorEl, snap);
       }
     };
     run();
-    requestAnimationFrame(run);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(run);
-    });
-    window.setTimeout(run, 50);
-    window.setTimeout(run, 280);
-    window.setTimeout(run, 500);
+    this.richHydratePassRafs.push(requestAnimationFrame(run));
+    this.richHydratePassRafs.push(
+      requestAnimationFrame(() => {
+        this.richHydratePassRafs.push(requestAnimationFrame(run));
+      })
+    );
+    this.richHydratePassTimers.push(window.setTimeout(run, 50));
+    this.richHydratePassTimers.push(window.setTimeout(run, 280));
+    this.richHydratePassTimers.push(window.setTimeout(run, 500));
   }
 
   /** 打开旧笔记时剥掉已废弃的缩放包装层，避免其内文本永远无法再补水合 */
@@ -8463,9 +8496,13 @@ export default class YoriEditorPlugin extends Plugin {
   private async loadRichEditorFromNote(): Promise<void> {
     const file = this.getRichHostFile();
     if (!file || !this.richEditorEl) return;
+    const gen = this.richEditorMountGeneration;
+    const editorAtStart = this.richEditorEl;
     this.richCheckboxFlagsFromLastNoteLoad = null;
     await this.coalesceMarkdownBufferBeforeRichLoad();
+    if (this.richEditorMountGeneration !== gen || this.richEditorEl !== editorAtStart) return;
     const raw = await this.readNoteRawForYori(file);
+    if (this.richEditorMountGeneration !== gen || this.richEditorEl !== editorAtStart) return;
     const { frontmatter, body } = splitLeadingYamlFrontmatter(raw);
     const { prefix, inner, suffix } = splitNoteAroundRichBlock(this.richBlockStart, this.richBlockEnd, body);
 
@@ -8512,6 +8549,7 @@ export default class YoriEditorPlugin extends Plugin {
     applyRichCheckboxCheckedFlagsToEditorInTreeOrder(this.richEditorEl, checkboxFlags);
 
     if (needsConsolidate) {
+      if (this.richEditorMountGeneration !== gen || this.richEditorEl !== editorAtStart) return;
       await this.persistConsolidatedRichBodyToDisk(file, frontmatter);
     }
   }
@@ -8519,10 +8557,12 @@ export default class YoriEditorPlugin extends Plugin {
   private async saveRichEditorToNote(): Promise<boolean> {
     const file = this.getRichHostFile();
     if (!file || !this.richEditorEl) return false;
+    const gen = this.richEditorMountGeneration;
     const clone = this.richEditorEl.cloneNode(true) as HTMLElement;
     this.dehydrateRichEditorDomForSave(clone);
     const innerStored = pickYoriInnerStorageFromDehydratedClone(clone);
     const raw = await this.readNoteRawForYori(file);
+    if (this.richEditorMountGeneration !== gen) return false;
     const { frontmatter } = splitLeadingYamlFrontmatter(raw);
     const next = composeNoteWithFrontmatterAndRichBlock(this.richBlockStart, this.richBlockEnd, frontmatter, innerStored);
     const norm = (s: string): string => s.replace(/\r\n/g, "\n");
@@ -8769,7 +8809,7 @@ export default class YoriEditorPlugin extends Plugin {
       this.restoreRichLeafSiblings(view);
       this.restoreRichViewContentDirectChildren(view);
       this.forEachMarkdownSubviewLayer(view, (el) => {
-        const reading = el.matches(".markdown-preview-view");
+        const reading = el.matches(".markdown-preview-view, .markdown-reading-view");
         el.setCssProps({
           display: reading ? "" : "none",
           pointerEvents: reading ? "" : "none",
@@ -8855,11 +8895,14 @@ export default class YoriEditorPlugin extends Plugin {
 
   private async persistConsolidatedRichBodyToDisk(file: TFile, frontmatter: string): Promise<void> {
     if (!this.richEditorEl) return;
+    const gen = this.richEditorMountGeneration;
     const clone = this.richEditorEl.cloneNode(true) as HTMLElement;
     this.dehydrateRichEditorDomForSave(clone);
     const innerStored = pickYoriInnerStorageFromDehydratedClone(clone);
     const next = composeNoteWithFrontmatterAndRichBlock(this.richBlockStart, this.richBlockEnd, frontmatter, innerStored);
+    if (this.richEditorMountGeneration !== gen) return;
     await this.app.vault.modify(file, next);
+    if (this.richEditorMountGeneration !== gen) return;
     this.syncOpenMarkdownViewsWithVaultText(file, next);
     this.richIsDirty = false;
     this.updateRichSaveState("saved");
@@ -9309,6 +9352,7 @@ export default class YoriEditorPlugin extends Plugin {
     }
     this.toolbarLayoutObserver?.disconnect();
     this.toolbarLayoutObserver = null;
+    this.clearToolbarPanelCloseHandlers();
     this.unmountRichEditor();
     this.toolbarEl?.remove();
     this.toolbarEl = null;
