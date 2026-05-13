@@ -102,7 +102,8 @@ export const RICH_SAVE_SPAN_STYLE_KEYS = new Set<string>([
   "text-decoration-line",
   "text-decoration-color",
   "text-decoration-style",
-  "text-decoration-thickness"
+  "text-decoration-thickness",
+  "background-color"
 ]);
 
 export const FONT_SIZE_PRESETS: ReadonlyArray<{ label: string; value: string }> = [

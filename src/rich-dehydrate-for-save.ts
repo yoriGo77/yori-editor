@@ -105,12 +105,7 @@ function mergeRichNestedFontSpanPair(parent: HTMLSpanElement, inner: HTMLSpanEle
     parent.style.setProperty(prop, value, priority || undefined);
   }
 
-  const st = parent.getAttribute("style");
-  if (st) {
-    const t = st.replace(/;\s*;/g, ";").replace(/^\s*;\s*|\s*;\s*$/g, "").trim();
-    if (t) parent.setAttribute("style", t);
-    else parent.removeAttribute("style");
-  }
+  /* 勿再 setAttribute("style")：font-family 常含引号，序列化回写会破坏整条 style，表现为样式丢失。 */
   if (richInlineFontWrapperIsMeaningless(parent)) {
     const p = parent.parentNode;
     if (p) {
@@ -242,6 +237,25 @@ function rebuildElementStyleWithWhitelist(el: HTMLElement, allowed: ReadonlySet<
   }
   if (parts.length) el.setAttribute("style", parts.join(";"));
   else el.removeAttribute("style");
+}
+
+/**
+ * Obsidian `sanitizeHTMLToDom` 加载笔记时常剥离 &lt;mark&gt;，导致高亮仅在内存中可见。
+ * 落盘前转为带 background-color（及 color）的 span，与 RICH_SAVE_SPAN_STYLE_KEYS 白名单一致。
+ */
+function convertRichHighlightMarksToSpansForSave(root: HTMLElement): void {
+  const marks = Array.from(root.querySelectorAll("mark"));
+  marks.sort((a, b) => richDomElementDepthUnderRoot(b, root) - richDomElementDepthUnderRoot(a, root));
+  for (const mark of marks) {
+    if (!root.contains(mark)) continue;
+    const span = yoriDetachedEl("span");
+    for (const key of ["background-color", "color"] as const) {
+      const v = mark.style.getPropertyValue(key).trim();
+      if (v) span.style.setProperty(key, v);
+    }
+    while (mark.firstChild) span.appendChild(mark.firstChild);
+    mark.parentNode?.replaceChild(span, mark);
+  }
 }
 
 /**
@@ -530,6 +544,7 @@ export function stampRichTablesSyncIdsForSave(root: HTMLElement): void {
 /** 富文本根 DOM 克隆保存前的完整脱水流水线（不含写盘）。 */
 export function dehydrateRichEditorDomForSave(root: HTMLElement): void {
   cleanupRichFontSpanSoupInTree(root);
+  convertRichHighlightMarksToSpansForSave(root);
   hoistRichParagraphFontStylesIntoInnerSpanForSave(root);
   stripNonAuthorInlineStylesForSave(root);
   dehydrateRichPdfEmbedsForSave(root);

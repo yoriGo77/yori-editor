@@ -31,6 +31,8 @@ const TOOLBAR_CMD: Record<string, Record<YoriUiLang, string>> = {
   "rich-highlight": { zh: "高亮", en: "Highlight" },
   "text-color": { zh: "文字颜色", en: "Text color" },
   "rich-text-color": { zh: "文字颜色", en: "Text color" },
+  "format-painter": { zh: "格式刷", en: "Format painter" },
+  "rich-format-painter": { zh: "格式刷", en: "Format painter" },
   "bullet-list": { zh: "项目符号", en: "Bulleted list" },
   "rich-bullet-list": { zh: "项目符号", en: "Bulleted list" },
   "numbered-list": { zh: "编号", en: "Numbered list" },
@@ -259,8 +261,24 @@ export function richNoticeStrings(lang: YoriUiLang) {
   return {
     pasteFailed: pick(lang, { zh: "无法粘贴，请改用 Ctrl+V。", en: "Couldn't paste — try Ctrl+V." }),
     cursorInCell: pick(lang, { zh: "请将光标放在表格单元格中。", en: "Place the caret in a table cell." }),
-    cursorInTable: pick(lang, { zh: "请将光标放在表格中。", en: "Place the caret in a table." })
+    cursorInTable: pick(lang, { zh: "请将光标放在表格中。", en: "Place the caret in a table." }),
+    formatPainterRichOnly: pick(lang, {
+      zh: "格式刷仅在高级编辑模式下可用。",
+      en: "Format painter is only available in Rich editing mode."
+    }),
+    formatPainterNeedSource: pick(lang, {
+      zh: "请先将光标放在要复制的格式的文本中，或选中一段样本文本，再点格式刷。",
+      en: "Place the caret in sample text or select text whose formatting you want to copy, then click Format painter."
+    })
   };
+}
+
+/** 格式刷按钮悬停说明（单击 / 双击连续刷） */
+export function formatPainterToolbarTooltip(lang: YoriUiLang): string {
+  return pick(lang, {
+    zh: "单击：复制格式后选中目标文本应用一次；表格可多选单元格后松开鼠标，整格套用格式；双击连续刷；再点按钮或 Esc 退出。",
+    en: "Click: copy formatting, select target text once to apply. In tables, drag-select multiple cells and release to format whole cells. Double-click: repeat apply. Click again or Esc to cancel."
+  });
 }
 
 /** 对齐循环按钮 title / aria */

@@ -156,6 +156,7 @@ import { yoriRichInnerLoadAsRawHtml } from "./src/yori-rich-inner-load";
 import { openRichTagInsertModal, type RichTagInsertHost } from "./src/rich-tag-insert-modal";
 import {
   colorPickModalStrings,
+  formatPainterToolbarTooltip,
   pickColorModalStrings,
   richAlignStepLabel,
   richAlignToolbarStrings,
@@ -194,6 +195,18 @@ const YORI_PDF_EMBED_MAX_HEIGHT = "min(88vh, 960px)";
 const YORI_FONT_WEIGHT_BOLD = "700";
 const YORI_FONT_STYLE_ITALIC = "italic";
 const YORI_DISPLAY_BLOCK = "block";
+
+type RichFormatPainterSnapshot = {
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  fontStyle: string;
+  color: string;
+  backgroundColor: string;
+  textDecorationLine: string;
+  /** 继承块对齐（居中/右对齐等），应用时写在段落或单元格上而非包裹 span */
+  textAlign: string;
+};
 
 export default class YoriEditorPlugin extends Plugin {
   settings: YoriEditorSettings;
@@ -294,6 +307,29 @@ export default class YoriEditorPlugin extends Plugin {
    * LP 勾选写回会更新缓冲区并可能立刻再派发 change/input；不设锁时易形成递归或巨量同步栈，表现为卡顿/闪退。
    */
   private nativePreviewCheckboxWriteLock = false;
+  /** 格式刷（高级编辑）：快照与 listeners */
+  private richFormatPainterSnapshot: RichFormatPainterSnapshot | null = null;
+  /** 鼠标按下格式刷瞬间取样（click 异步后会丢失选区）。 */
+  private richFormatPainterPendingSnapshot: RichFormatPainterSnapshot | null = null;
+  private richFormatPainterSticky = false;
+  private richFormatPainterBtnEl: HTMLButtonElement | null = null;
+  private richFormatPainterClickTimer: number | null = null;
+  private richFormatPainterMouseUpHandler: ((e: MouseEvent) => void) | null = null;
+  private richFormatPainterKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /** 捕获阶段取样：点击工具栏会夺走焦点并清空 Selection，必须在 pointerdown 阶段克隆 Range。 */
+  private readonly onFormatPainterToolbarPointerDownCapture = (evt: PointerEvent): void => {
+    const t = evt.target;
+    if (!(t instanceof Element)) return;
+    if (!t.closest(".yori-toolbar-format-painter")) return;
+    if (this.settings.toolbarMode !== "rich" || !this.richEditorEl) return;
+    const ranges = this.snapshotRichSelectionForToolbar();
+    const snap =
+      ranges && ranges.length > 0
+        ? this.captureRichFormatPainterSnapshotFromRanges(ranges)
+        : this.captureRichFormatPainterSnapshot();
+    // 仅在真正取样成功时写入：mousedown/双击第二次按下时常已无选区，勿用 null 覆盖捕获阶段的有效快照。
+    if (snap !== null) this.richFormatPainterPendingSnapshot = snap;
+  };
   /** 桥接层同一勾选短时间重复派发 change/input，第二次写盘会引发 Obsidian「外部修改」提示 */
   private nativeTableCheckboxSyncDedupeKey = "";
   private nativeTableCheckboxSyncDedupeAt = 0;
@@ -394,6 +430,9 @@ export default class YoriEditorPlugin extends Plugin {
     this.registerEditorExtension(
       createNativeMarkdownVaultDropPasteExtension(this as unknown as NativeMarkdownVaultDropPasteCmHost)
     );
+    this.registerDomEvent(activeDocument, "pointerdown", this.onFormatPainterToolbarPointerDownCapture, {
+      capture: true
+    });
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.mountToolbar()));
     this.registerEvent(
       this.app.metadataCache.on("resolve", (file) => {
@@ -905,6 +944,14 @@ export default class YoriEditorPlugin extends Plugin {
     this.toolbarLayoutObserver?.disconnect();
     this.toolbarLayoutObserver = null;
     this.clearToolbarPanelCloseHandlers();
+    this.teardownRichFormatPainterListeners();
+    this.richFormatPainterSnapshot = null;
+    this.richFormatPainterPendingSnapshot = null;
+    this.richFormatPainterSticky = false;
+    if (this.richFormatPainterClickTimer != null) {
+      window.clearTimeout(this.richFormatPainterClickTimer);
+      this.richFormatPainterClickTimer = null;
+    }
     this.toolbarEl?.remove();
     this.toolbarEl = null;
     this.richAlignCycleBtnEl = null;
@@ -913,6 +960,7 @@ export default class YoriEditorPlugin extends Plugin {
     this.richBorderPanelEl = null;
     this.textColorIndicatorEl = null;
     this.highlightColorIndicatorEl = null;
+    this.richFormatPainterBtnEl = null;
     this.fontFamilyToolbarLabelEl = null;
     this.fontSizeToolbarLabelEl = null;
     this.fontFamilyPresetPanelEl = null;
@@ -960,6 +1008,10 @@ export default class YoriEditorPlugin extends Plugin {
         }
         if (action.command === "text-color" || action.command === "rich-text-color") {
           this.createTextColorSplitButton(groupEl, isRichMode);
+          return;
+        }
+        if (action.command === "format-painter" || action.command === "rich-format-painter") {
+          this.createFormatPainterToolbarButton(groupEl, isRichMode);
           return;
         }
         if (isRichMode && action.command === "rich-line-spacing") {
@@ -3352,6 +3404,532 @@ export default class YoriEditorPlugin extends Plugin {
     } catch {
       /* ignore */
     }
+  }
+
+  private teardownRichFormatPainterListeners(): void {
+    if (this.richFormatPainterMouseUpHandler) {
+      activeDocument.removeEventListener("mouseup", this.richFormatPainterMouseUpHandler, true);
+      this.richFormatPainterMouseUpHandler = null;
+    }
+    if (this.richFormatPainterKeyHandler) {
+      window.removeEventListener("keydown", this.richFormatPainterKeyHandler, true);
+      this.richFormatPainterKeyHandler = null;
+    }
+  }
+
+  private setRichFormatPainterToolbarActive(on: boolean): void {
+    this.richFormatPainterBtnEl?.classList.toggle("is-format-painter-active", on);
+  }
+
+  private richFormatPainterCssColorIsTransparent(css: string): boolean {
+    const v = (css || "").trim().toLowerCase();
+    return (
+      !v ||
+      v === "transparent" ||
+      v === "rgba(0, 0, 0, 0)" ||
+      v === "rgba(0,0,0,0)" ||
+      v === "rgba(0, 0, 0, 0.0)"
+    );
+  }
+
+  /**
+   * 格式刷取样节点：须紧贴选区端点的 DOM，才能反映 &lt;b&gt;/&lt;i&gt;/&lt;u&gt;/&lt;s&gt; 等语义标签的计算样式。
+   * 若向上爬到外层 &lt;span&gt;，getComputedStyle(span) 对子元素上的粗斜体划线常为 normal/none（子节点绘制），导致快照丢失。
+   */
+  private richFormatPainterProbeElementFromNode(node: Node | null): HTMLElement | null {
+    if (!this.richEditorEl || !node || !this.richEditorEl.contains(node)) return null;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const p = node.parentElement;
+      if (!p || !this.richEditorEl.contains(p) || p === this.richEditorEl) return null;
+      return p;
+    }
+
+    if (node.instanceOf(HTMLElement)) {
+      const el = node;
+      if (!this.richEditorEl.contains(el) || el === this.richEditorEl) return null;
+      return el;
+    }
+
+    return null;
+  }
+
+  /** 计算样式 font-family 列表的首项若为 UA 栈，多为「取样落在未单独设字体的节点」；与终点比对择优。 */
+  private richFormatPainterComputedFirstFontTokenLooksSystem(ff: string): boolean {
+    const raw = ff.trim();
+    if (!raw) return true;
+    const first = raw
+      .split(",")[0]
+      .trim()
+      .replace(/^["']+|["']+$/g, "")
+      .toLowerCase();
+    return (
+      first === "-apple-system" ||
+      first === "system-ui" ||
+      first === "blinkmacsystemfont" ||
+      first === "sans-serif"
+    );
+  }
+
+  private pickRichFormatPainterProbeFromRange(range: Range): HTMLElement | null {
+    const a = this.richFormatPainterProbeElementFromNode(range.startContainer);
+    const b = this.richFormatPainterProbeElementFromNode(range.endContainer);
+    if (!a && !b) return null;
+    if (!a) return b;
+    if (!b || a === b) return a;
+    const fa = window.getComputedStyle(a).fontFamily;
+    const fb = window.getComputedStyle(b).fontFamily;
+    const sysA = this.richFormatPainterComputedFirstFontTokenLooksSystem(fa);
+    const sysB = this.richFormatPainterComputedFirstFontTokenLooksSystem(fb);
+    if (sysA && !sysB) return b;
+    if (!sysA && sysB) return a;
+    const sa = this.richFormatPainterProbeFormattingStrength(a);
+    const sb = this.richFormatPainterProbeFormattingStrength(b);
+    if (sa !== sb) return sa >= sb ? a : b;
+    return a;
+  }
+
+  /** 两端字体栈相近时，优先取粗斜体/划线更强的一侧（避免整段选中但起点落在普通文本）。 */
+  private richFormatPainterProbeFormattingStrength(el: HTMLElement): number {
+    const cs = window.getComputedStyle(el);
+    let s = 0;
+    const w = cs.fontWeight || "";
+    const nw = Number.parseInt(w, 10);
+    if ((Number.isFinite(nw) && nw >= 600) || w === "bold" || w === "bolder") s += 4;
+    if ((cs.fontStyle || "").toLowerCase() === "italic") s += 2;
+    const d = this.richFormatPainterMergedDecorationLineFromProbe(el).toLowerCase();
+    if (d.includes("underline")) s += 1;
+    if (d.includes("line-through")) s += 1;
+    return s;
+  }
+
+  /** cloneContents 脱离祖先链后 getComputedStyle 会退回 UA 字体（如 -apple-system），不可用；始终以实时 DOM 为准。 */
+  private richFormatPainterDecorationFromComputed(cs: CSSStyleDeclaration): string {
+    let line = (cs.textDecorationLine || "").trim();
+    if (line && line !== "none") return line;
+    const raw = String(cs.textDecoration || "").toLowerCase();
+    const parts: string[] = [];
+    if (/\bunderline\b/.test(raw)) parts.push("underline");
+    if (/\bline-through\b/.test(raw)) parts.push("line-through");
+    return parts.join(" ");
+  }
+
+  /**
+   * &lt;u&gt;/&lt;s&gt; 常包在内层 span 外；子节点 getComputedStyle 对划线多为 none（由祖先绘制），须沿祖先合并。
+   */
+  private richFormatPainterMergedDecorationLineFromProbe(probe: HTMLElement): string {
+    const acc = new Set<string>();
+    let cur: HTMLElement | null = probe;
+    while (cur && this.richEditorEl?.contains(cur) && cur !== this.richEditorEl) {
+      if (/^(P|DIV|H[1-6]|LI|BLOCKQUOTE|TD|TH)$/i.test(cur.tagName)) break;
+      const tag = cur.tagName;
+      if (tag === "U") acc.add("underline");
+      if (tag === "S" || tag === "STRIKE" || tag === "DEL") acc.add("line-through");
+      const line = this.richFormatPainterDecorationFromComputed(window.getComputedStyle(cur))
+        .trim()
+        .toLowerCase();
+      if (line && line !== "none") {
+        for (const tok of line.split(/\s+/)) {
+          if (tok === "underline" || tok === "line-through") acc.add(tok);
+        }
+      }
+      cur = cur.parentElement;
+    }
+    return ["underline", "line-through"].filter((k) => acc.has(k)).join(" ");
+  }
+
+  private richFormatPainterNearestAlignBlock(node: Node): HTMLElement | null {
+    if (!this.richEditorEl) return null;
+    const start =
+      node.nodeType === Node.TEXT_NODE ? node.parentElement : node.instanceOf(HTMLElement) ? node : null;
+    let cur: HTMLElement | null = start;
+    while (cur && this.richEditorEl.contains(cur) && cur !== this.richEditorEl) {
+      if (/^(P|DIV|H[1-6]|LI|BLOCKQUOTE|TD|TH|PRE|SECTION|ARTICLE|FIGURE)$/i.test(cur.tagName)) {
+        return cur;
+      }
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  private richFormatPainterApplyTextAlignToBlocks(
+    blocks: readonly HTMLElement[],
+    snap: RichFormatPainterSnapshot
+  ): void {
+    const a = (snap.textAlign || "").trim();
+    if (!a) return;
+    for (const el of blocks) {
+      yoriApplyStyleProps(el, { "text-align": a });
+    }
+  }
+
+  private richFormatPainterSnapshotFromComputedProbe(probe: HTMLElement): RichFormatPainterSnapshot {
+    const cs = window.getComputedStyle(probe);
+    let backgroundColor = cs.backgroundColor || "";
+    if (this.richFormatPainterCssColorIsTransparent(backgroundColor)) {
+      let anc: HTMLElement | null = probe.parentElement;
+      while (anc && this.richEditorEl?.contains(anc) && anc !== this.richEditorEl) {
+        if (/^(P|DIV|H[1-6]|LI|BLOCKQUOTE|TD|TH)$/i.test(anc.tagName)) break;
+        const ag = window.getComputedStyle(anc).backgroundColor || "";
+        if (!this.richFormatPainterCssColorIsTransparent(ag)) {
+          backgroundColor = ag;
+          break;
+        }
+        anc = anc.parentElement;
+      }
+    }
+    return {
+      fontFamily: cs.fontFamily || "",
+      fontSize: cs.fontSize || "",
+      fontWeight: cs.fontWeight || "",
+      fontStyle: cs.fontStyle || "",
+      color: cs.color || "",
+      backgroundColor,
+      textDecorationLine: this.richFormatPainterMergedDecorationLineFromProbe(probe),
+      textAlign: cs.textAlign || ""
+    };
+  }
+
+  private captureRichFormatPainterSnapshot(): RichFormatPainterSnapshot | null {
+    if (!this.richEditorEl) return null;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!this.richEditorEl.contains(range.commonAncestorContainer)) return null;
+    const probe = this.pickRichFormatPainterProbeFromRange(range);
+    if (!probe) return null;
+    return this.richFormatPainterSnapshotFromComputedProbe(probe);
+  }
+
+  private captureRichFormatPainterSnapshotFromRanges(ranges: Range[]): RichFormatPainterSnapshot | null {
+    if (!this.richEditorEl || ranges.length === 0) return null;
+    let range: Range;
+    try {
+      range = ranges[0].cloneRange();
+    } catch {
+      return null;
+    }
+    if (!this.richEditorEl.contains(range.commonAncestorContainer)) return null;
+
+    const probe = this.pickRichFormatPainterProbeFromRange(range);
+    return probe ? this.richFormatPainterSnapshotFromComputedProbe(probe) : null;
+  }
+
+  /** 逐属性 setProperty，避免 style 字符串/HTML attribute 对引号的敏感性；对齐仍写在块级容器上。 */
+  private richFormatPainterApplySnapshotInlineToElement(el: HTMLElement, snap: RichFormatPainterSnapshot): void {
+    const ff = snap.fontFamily.trim();
+    const fs = snap.fontSize.trim();
+    const fw = snap.fontWeight.trim();
+    const fst = snap.fontStyle.trim();
+    if (ff) el.style.setProperty("font-family", ff);
+    else el.style.removeProperty("font-family");
+    if (fs) el.style.setProperty("font-size", fs);
+    else el.style.removeProperty("font-size");
+    if (fw && fw !== "normal") el.style.setProperty("font-weight", fw);
+    else el.style.removeProperty("font-weight");
+    if (fst && fst !== "normal") el.style.setProperty("font-style", fst);
+    else el.style.removeProperty("font-style");
+    if (snap.color && !this.richFormatPainterCssColorIsTransparent(snap.color)) {
+      el.style.setProperty("color", snap.color);
+    } else el.style.removeProperty("color");
+    if (
+      snap.backgroundColor &&
+      !this.richFormatPainterCssColorIsTransparent(snap.backgroundColor)
+    ) {
+      el.style.setProperty("background-color", snap.backgroundColor);
+    } else el.style.removeProperty("background-color");
+
+    const decoRaw = (snap.textDecorationLine || "").trim();
+    const deco = decoRaw.toLowerCase();
+    if (deco && deco !== "none") {
+      const spaced = decoRaw.replace(/\s+/g, " ").trim();
+      el.style.setProperty("text-decoration-line", spaced);
+      /* shorthand 含 style/color，避免仅 line 时在 contenteditable 内不绘制 */
+      el.style.setProperty("text-decoration", `${spaced} solid currentcolor`);
+    } else {
+      el.style.removeProperty("text-decoration-line");
+      el.style.removeProperty("text-decoration");
+      el.style.removeProperty("text-decoration-color");
+      el.style.removeProperty("text-decoration-style");
+    }
+  }
+
+  private unwrapRichInlineFormattingInDetachedHolder(holder: HTMLElement): void {
+    const unwrapTags = new Set(["MARK", "B", "STRONG", "I", "EM", "U", "S", "STRIKE", "FONT"]);
+    for (let i = 0; i < 96; i++) {
+      const hit = Array.from(holder.querySelectorAll<HTMLElement>("*")).find((el) =>
+        unwrapTags.has(el.tagName)
+      );
+      if (!hit) break;
+      this.unwrapDomElement(hit);
+    }
+    Array.from(holder.querySelectorAll<HTMLElement>("span")).forEach((span) => {
+      span.removeAttribute("style");
+      span.removeAttribute("class");
+      if (!span.attributes.length && span.parentNode) this.unwrapDomElement(span);
+    });
+  }
+
+  /**
+   * 对给定 Range 应用格式刷 DOM（不含 undo、表格单元格底色快照、markDirty）。
+   * @param sel 非 null 时写入选区；批量表格单元格传 null。
+   */
+  private applyRichFormatPainterSnapshotToRange(
+    snap: RichFormatPainterSnapshot,
+    range: Range,
+    sel: Selection | null
+  ): void {
+    if (!this.richEditorEl) return;
+    const r = range.cloneRange();
+    if (!this.richEditorEl.contains(r.commonAncestorContainer)) return;
+
+    /** extractContents 后仍可指向原位段落或整块被选中的 &lt;p&gt;（整块时在 holder 的 topBlocks 上对齐）。 */
+    const fallbackAlignBlocks: HTMLElement[] = [];
+    const alignStart = this.richFormatPainterNearestAlignBlock(r.startContainer);
+    const alignEnd = this.richFormatPainterNearestAlignBlock(r.endContainer);
+    if (alignStart) fallbackAlignBlocks.push(alignStart);
+    if (alignEnd && alignEnd !== alignStart) fallbackAlignBlocks.push(alignEnd);
+
+    const holder = yoriDetachedEl("div");
+    holder.appendChild(r.extractContents());
+    this.unwrapRichInlineFormattingInDetachedHolder(holder);
+    holder.querySelectorAll<HTMLElement>("*").forEach((el) => this.clearRichInlineFormattingOnElement(el));
+
+    const topBlocks = Array.from(holder.children).filter(
+      (c) => c.nodeType === Node.ELEMENT_NODE && this.isRichBlockElement(c as HTMLElement)
+    ) as HTMLElement[];
+
+    const blocksToAlign = topBlocks.length > 0 ? topBlocks.slice() : fallbackAlignBlocks.slice();
+
+    if (topBlocks.length === 0) {
+      const span = yoriDetachedEl("span");
+      this.richFormatPainterApplySnapshotInlineToElement(span, snap);
+      while (holder.firstChild) span.appendChild(holder.firstChild);
+      r.insertNode(span);
+      if (sel) {
+        sel.removeAllRanges();
+        const nr = activeDocument.createRange();
+        nr.selectNodeContents(span);
+        sel.addRange(nr);
+      }
+    } else {
+      for (const block of topBlocks) {
+        const inner = yoriDetachedEl("span");
+        this.richFormatPainterApplySnapshotInlineToElement(inner, snap);
+        while (block.firstChild) inner.appendChild(block.firstChild);
+        block.appendChild(inner);
+      }
+      /* eslint-disable-next-line obsidianmd/prefer-create-el -- DocumentFragment；lib.dom 未声明 Obsidian 文档上的 createFragment */
+      const frag = activeDocument.createDocumentFragment();
+      while (holder.firstChild) frag.appendChild(holder.firstChild);
+      const first = frag.firstChild;
+      const last = frag.lastChild;
+      r.insertNode(frag);
+      if (sel) {
+        sel.removeAllRanges();
+        if (first && last && first.parentNode) {
+          const nr = activeDocument.createRange();
+          nr.setStartBefore(first);
+          nr.setEndAfter(last);
+          sel.addRange(nr);
+        }
+      }
+    }
+
+    this.richFormatPainterApplyTextAlignToBlocks(blocksToAlign, snap);
+  }
+
+  /** 表格拖选多格：逐格对单元格内全部内容套用格式刷（与批量前景色/高亮一致）。 */
+  private applyRichFormatPainterSnapshotToTableCells(
+    cells: readonly HTMLTableCellElement[],
+    snap: RichFormatPainterSnapshot
+  ): void {
+    if (!this.richEditorEl || cells.length === 0) return;
+    const sane = cells.filter((c) => this.richEditorEl!.contains(c));
+    if (sane.length === 0) return;
+
+    this.rememberRichStateForUndo();
+    this.richEditorEl.focus();
+
+    const cellBgs = this.snapshotTableCellBackgroundsFromCells(sane);
+
+    for (const cell of sane) {
+      const rg = activeDocument.createRange();
+      rg.selectNodeContents(cell);
+      if (rg.collapsed) {
+        cell.empty();
+        const span = yoriDetachedEl("span");
+        this.richFormatPainterApplySnapshotInlineToElement(span, snap);
+        span.appendChild(yoriDetachedEl("br"));
+        cell.appendChild(span);
+        continue;
+      }
+      this.applyRichFormatPainterSnapshotToRange(snap, rg, null);
+    }
+
+    this.restoreTableCellBackgrounds(cellBgs);
+    this.richFormatPainterApplyTextAlignToBlocks(sane, snap);
+
+    this.markRichDirty();
+    this.scheduleRichAutoSave();
+    this.scheduleRichSelectionVisualSync();
+    this.restoreCaretToEndOfFirstTableCell(sane);
+    this.richEditorEl.focus();
+  }
+
+  private applyRichFormatPainterSnapshotToSelection(snap: RichFormatPainterSnapshot): void {
+    if (!this.richEditorEl) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    if (!this.richEditorEl.contains(range.commonAncestorContainer)) return;
+
+    this.rememberRichStateForUndo();
+    this.richEditorEl.focus();
+
+    const cellBgs = this.snapshotIntersectingTableCellBackgrounds();
+
+    this.applyRichFormatPainterSnapshotToRange(snap, range, sel);
+
+    this.restoreTableCellBackgrounds(cellBgs);
+
+    /* mergeRichNestedFontSpanPair 曾用 setAttribute 回写 style，会破坏 font-family；仅在保存脱水路径整理 span。 */
+    this.markRichDirty();
+    this.scheduleRichAutoSave();
+    this.scheduleRichSelectionVisualSync();
+    this.richEditorEl.focus();
+  }
+
+  private tryApplyRichFormatPainterAfterMouseUp(): void {
+    const snap = this.richFormatPainterSnapshot;
+    if (!snap || !this.richEditorEl) return;
+
+    const cells = this.getRichTableCellsForBulkTextStyle();
+    if (cells.length > 1) {
+      this.applyRichFormatPainterSnapshotToTableCells(cells, snap);
+      if (!this.richFormatPainterSticky) {
+        this.teardownRichFormatPainterListeners();
+        this.richFormatPainterSnapshot = null;
+        this.setRichFormatPainterToolbarActive(false);
+      }
+      return;
+    }
+
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    if (!this.richEditorEl.contains(range.commonAncestorContainer)) return;
+
+    this.applyRichFormatPainterSnapshotToSelection(snap);
+
+    if (!this.richFormatPainterSticky) {
+      this.teardownRichFormatPainterListeners();
+      this.richFormatPainterSnapshot = null;
+      this.setRichFormatPainterToolbarActive(false);
+    }
+  }
+
+  private onRichFormatPainterDocumentMouseUp(evt: MouseEvent): void {
+    if (!this.richFormatPainterSnapshot || !this.richEditorEl) return;
+    const t = evt.target;
+    if (t instanceof Node && this.toolbarEl?.contains(t)) return;
+    queueMicrotask(() => {
+      requestAnimationFrame(() => this.tryApplyRichFormatPainterAfterMouseUp());
+    });
+  }
+
+  private armRichFormatPainterListeners(): void {
+    this.teardownRichFormatPainterListeners();
+    const up = (e: MouseEvent): void => {
+      this.onRichFormatPainterDocumentMouseUp(e);
+    };
+    this.richFormatPainterMouseUpHandler = up;
+    activeDocument.addEventListener("mouseup", up, true);
+    const key = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      this.teardownRichFormatPainterListeners();
+      this.richFormatPainterSnapshot = null;
+      this.richFormatPainterPendingSnapshot = null;
+      this.richFormatPainterSticky = false;
+      this.setRichFormatPainterToolbarActive(false);
+    };
+    this.richFormatPainterKeyHandler = key;
+    window.addEventListener("keydown", key, true);
+  }
+
+  private async activateRichFormatPainterFromToolbar(sticky: boolean): Promise<void> {
+    const ns = richNoticeStrings(this.uiLang());
+    if (this.settings.toolbarMode !== "rich") {
+      new Notice(ns.formatPainterRichOnly);
+      return;
+    }
+    await this.ensureRichEditingUiReady();
+    if (!this.richEditorEl) return;
+
+    if (this.richFormatPainterSnapshot !== null) {
+      this.teardownRichFormatPainterListeners();
+      this.richFormatPainterSnapshot = null;
+      this.richFormatPainterPendingSnapshot = null;
+      this.richFormatPainterSticky = false;
+      this.setRichFormatPainterToolbarActive(false);
+      return;
+    }
+
+    let snap = this.richFormatPainterPendingSnapshot;
+    this.richFormatPainterPendingSnapshot = null;
+
+    if (!snap) {
+      await this.restoreRichEditingSurfaceForMutation();
+      snap = this.captureRichFormatPainterSnapshot();
+    }
+    if (!snap) {
+      new Notice(ns.formatPainterNeedSource);
+      return;
+    }
+    this.richFormatPainterSnapshot = snap;
+    this.richFormatPainterSticky = sticky;
+    this.setRichFormatPainterToolbarActive(true);
+    this.armRichFormatPainterListeners();
+  }
+
+  /** 工具栏格式刷：位于文字颜色之后；双击进入连续刷模式。 */
+  private createFormatPainterToolbarButton(groupEl: HTMLElement, isRichMode: boolean): void {
+    const lang = this.uiLang();
+    const label = toolbarCommandLabel(lang, isRichMode ? "rich-format-painter" : "format-painter");
+    const hint = formatPainterToolbarTooltip(lang);
+    const btn = groupEl.createEl("button", {
+      cls: "yori-toolbar-format-painter",
+      attr: {
+        "aria-label": label,
+        title: `${label} — ${hint}`
+      }
+    });
+    setIcon(btn, "paintbrush");
+    this.richFormatPainterBtnEl = btn;
+    btn.addEventListener("mousedown", (evt) => {
+      evt.preventDefault();
+      // 取样仅在 document 捕获阶段 pointerdown 完成（见 onFormatPainterToolbarPointerDownCapture）。
+      // 此处若再 capture，焦点已离开编辑区，选区多为空，会覆盖掉有效 pending。
+    });
+    btn.addEventListener("click", (evt: MouseEvent) => {
+      if (!isRichMode) {
+        new Notice(richNoticeStrings(lang).formatPainterRichOnly);
+        return;
+      }
+      if (evt.detail >= 2) return;
+      window.clearTimeout(this.richFormatPainterClickTimer ?? undefined);
+      this.richFormatPainterClickTimer = window.setTimeout(() => {
+        this.richFormatPainterClickTimer = null;
+        void this.activateRichFormatPainterFromToolbar(false);
+      }, 280);
+    });
+    btn.addEventListener("dblclick", (evt) => {
+      evt.preventDefault();
+      if (!isRichMode) return;
+      window.clearTimeout(this.richFormatPainterClickTimer ?? undefined);
+      this.richFormatPainterClickTimer = null;
+      void this.activateRichFormatPainterFromToolbar(true);
+    });
   }
 
   /**
@@ -8022,6 +8600,7 @@ export default class YoriEditorPlugin extends Plugin {
   private unmountRichEditor(): void {
     this.detachRichResizeDocumentListeners();
     this.cleanupRichImageResizeListeners();
+    this.teardownRichFormatPainterListeners();
     window.removeEventListener("dragend", this.richGlobalDragEndCapture, true);
     this.richInternalDragMediaParagraph = null;
     this.flushRichAutoSaveNow();

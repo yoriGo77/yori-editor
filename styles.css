@@ -526,6 +526,12 @@
   background: color-mix(in srgb, var(--background-modifier-hover) 85%, var(--background-primary) 15%) !important;
 }
 
+.yori-editor-toolbar button.yori-toolbar-format-painter.is-format-painter-active {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
 .yori-editor-toolbar button.yori-font-select:focus-visible {
   border: 1px solid color-mix(in srgb, var(--yori-text) 38%, var(--background-modifier-border) 62%) !important;
   background: color-mix(in srgb, var(--background-modifier-hover) 85%, var(--background-primary) 15%) !important;
